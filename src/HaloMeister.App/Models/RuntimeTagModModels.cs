@@ -29,6 +29,8 @@ public sealed class RuntimeTagModPatch
     public string? Data { get; set; }
     public string? ReferenceGroup { get; set; }
     public string? ReferenceName { get; set; }
+    public string? StringIdName { get; set; }
+    public bool ClearReference { get; set; }
 }
 
 public sealed class RuntimeTagModBlockStep

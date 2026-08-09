@@ -295,21 +295,16 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
             {
                 return;
             }
-            _weaponVariants = BuildPolicy.EnforceCustomizationOwnership
-                ? catalog.Variants.Where(variant => variant.Index == 0).ToArray()
-                : catalog.Variants;
+            _weaponVariants = catalog.Variants;
             VariantPicker.ItemsSource = _weaponVariants;
             VariantPicker.SelectedIndex = 0;
             _selectedVariant = VariantPicker.SelectedItem as WeaponModelVariant;
-            VariantSummaryText.Text =
-                BuildPolicy.EnforceCustomizationOwnership
-                    ? L.Get("weapon_loader.retail_ownership_protection")
-                    : L.Format(
-                        _weaponVariants.Count == 1
-                            ? "weapon_loader.authored_variant_one"
-                            : "weapon_loader.authored_variant_many",
-                        _weaponVariants.Count,
-                        catalog.Model.LeafName);
+            VariantSummaryText.Text = L.Format(
+                _weaponVariants.Count == 1
+                    ? "weapon_loader.authored_variant_one"
+                    : "weapon_loader.authored_variant_many",
+                _weaponVariants.Count,
+                catalog.Model.LeafName);
         }
         catch (Exception ex)
         {
@@ -332,42 +327,25 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
         UpdateVariantControls();
     }
 
-    private async void OnApplyVariant(object sender, RoutedEventArgs e)
-    {
-        if (_selected is not { } weapon ||
-            _selectedVariant is not { } variant)
-            return;
-        if (BuildPolicy.EnforceCustomizationOwnership && variant.Index != 0)
-        {
-            ShowStatus(
-                L.Get("weapon_loader.retail_cannot_apply_variant"),
-                InfoBarSeverity.Warning);
-            return;
-        }
-
-        await RunBusy(async () =>
-        {
-            ScriptExecutionResult result =
-                await _loader.ApplyVariantAsync(weapon, variant);
-            ShowStatus(
-                L.Format(
-                    "weapon_loader.applied_variant",
-                    variant.Name,
-                    weapon.Name,
-                    result.Message),
-                InfoBarSeverity.Success);
-        });
-    }
-
     private async void OnLoadWeapon(object sender, RoutedEventArgs e)
     {
         if (_selected is not { } weapon) return;
         await RunBusy(async () =>
         {
-            ScriptExecutionResult result = await _loader.LoadAsync(weapon);
-            ShowStatus(
-                L.Format("weapon_loader.weapon_handed_to_player", weapon.Name, result.Message),
-                InfoBarSeverity.Success);
+            ScriptExecutionResult result = await _loader.LoadAsync(
+                weapon,
+                _selectedVariant);
+            string message = _selectedVariant is null
+                ? L.Format(
+                    "weapon_loader.weapon_handed_to_player",
+                    weapon.Name,
+                    result.Message)
+                : L.Format(
+                    "weapon_loader.weapon_handed_to_player_variant",
+                    weapon.Name,
+                    _selectedVariant.Name,
+                    result.Message);
+            ShowStatus(message, InfoBarSeverity.Success);
         });
     }
 
@@ -448,7 +426,6 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
         ProjectilePicker.IsEnabled = false;
         SwapButton.IsEnabled = false;
         VariantPicker.IsEnabled = false;
-        ApplyVariantButton.IsEnabled = false;
         ImportStanchionButton.IsEnabled = false;
         ApplySubstitutionsButton.IsEnabled = false;
         try { await action(); }
@@ -543,7 +520,6 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
             bridge.IsRuntimeReady &&
             !bridge.IsStale;
         VariantPicker.IsEnabled = ready;
-        ApplyVariantButton.IsEnabled = ready && _selectedVariant is not null;
     }
 
     private void ShowStatus(string message, InfoBarSeverity severity)

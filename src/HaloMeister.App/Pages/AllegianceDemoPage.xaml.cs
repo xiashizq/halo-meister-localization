@@ -193,8 +193,11 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
                         item.SelectedWeapon.Weapon);
                     if (spawn.SpawnResult.Outcome == ScriptOutcome.Failed)
                     {
+                        string detail = string.IsNullOrWhiteSpace(spawn.SpawnResult.Message)
+                            ? L.Get("allegiance_demo.batch_failed_unknown")
+                            : spawn.SpawnResult.Message.Trim();
                         throw new InvalidOperationException(
-                            L.Format("allegiance_demo.batch_failed", created));
+                            L.Format("allegiance_demo.batch_failed", created, detail));
                     }
                     _lastActorDatum = spawn.ActorDatum ?? _lastActorDatum;
                     _lastApplyTeam = item.SelectedTeam.Value;

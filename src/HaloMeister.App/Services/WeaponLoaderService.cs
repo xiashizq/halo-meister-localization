@@ -113,6 +113,7 @@ public sealed class WeaponLoaderService : IDisposable
 
     public async Task<ScriptExecutionResult> LoadAsync(
         LoadableWeapon selected,
+        WeaponModelVariant? variant = null,
         CancellationToken cancellationToken = default)
     {
         ScriptingBridgeStatus status = _bridge.GetStatus();
@@ -139,6 +140,12 @@ public sealed class WeaponLoaderService : IDisposable
             cancellationToken);
         if (result.Outcome != ScriptOutcome.Confirmed)
             throw new InvalidOperationException(result.Message);
+
+        if (variant is not null &&
+            variant.Index != 0 &&
+            variant.StringId != 0)
+            result = await ApplyVariantAsync(selected, variant, cancellationToken);
+
         return result;
     }
 
@@ -235,7 +242,7 @@ public sealed class WeaponLoaderService : IDisposable
             result.Add(new WeaponModelVariant(
                 index,
                 stringId,
-                FriendlyVariantName(live, index)));
+                FriendlyVariantName(live, stringId, index)));
         }
 
         if (result.Count == 0)
@@ -701,8 +708,12 @@ public sealed class WeaponLoaderService : IDisposable
             .Select(char.ToLowerInvariant)
             .ToArray());
 
-    private static string FriendlyVariantName(RuntimeTagEntry weapon, int index)
+    private string FriendlyVariantName(RuntimeTagEntry weapon, uint stringId, int index)
     {
+        if (_memory.TryGetStringIdName(stringId, out string? authored) &&
+            !string.IsNullOrWhiteSpace(authored))
+            return authored!;
+
         if (index == 0) return "Default";
         string leaf = NormalizeWeaponSelector(weapon.LeafName);
         return (leaf, index) switch

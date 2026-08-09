@@ -192,6 +192,12 @@
                 </NavigationViewItem>
 
                 <NavigationViewItem
+                    x:Name="ChangeBipedNavItem"
+                    Content="{i18n:Loc Key='shell.change_character'}"
+                    Icon="Contact"
+                    Tag="change-biped" />
+
+                <NavigationViewItem
                     x:Name="AdvancedNavItem"
                     Content="{i18n:Loc Key='shell.advanced'}"
                     Icon="Repair"

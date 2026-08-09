@@ -162,6 +162,7 @@ public sealed partial class MainWindow : Window
         AllegianceNavItem.Content = L.Get("shell.allegiance");
         PlayerAppearanceNavItem.Content = L.Get("shell.player_appearance");
         CameraWorldNavItem.Content = L.Get("shell.camera_world");
+        ChangeBipedNavItem.Content = L.Get("shell.change_character");
         AdvancedNavItem.Content = L.Get("shell.advanced");
         // RuntimeTagsNavItem.Content = L.Get("shell.realtime_tags");
         ScriptingNavItem.Content = L.Get("shell.scripting");
@@ -520,6 +521,7 @@ public sealed partial class MainWindow : Window
         "builtin-mod" => typeof(BuiltinModPage),
         "live-gameplay" or "live-spawn" or "live-player" or "live-world" => typeof(LiveToolsHubPage),
         "live-allegiance" => typeof(AllegianceDemoPage),
+        "change-biped" => typeof(ChangeBipedPage),
         "runtime-tags" => typeof(RuntimeTagsPage),
         "scripting" => typeof(ScriptingPage),
         _ => typeof(MissionsPage),
@@ -691,6 +693,7 @@ public sealed partial class MainWindow : Window
             "live-allegiance" => AllegianceNavItem,
             "live-player" => PlayerAppearanceNavItem,
             "live-world" => CameraWorldNavItem,
+            "change-biped" => ChangeBipedNavItem,
             // "runtime-tags" => RuntimeTagsNavItem,
             "scripting" => ScriptingNavItem,
             "phone-remote" => RemoteNavItem,

@@ -8,6 +8,7 @@ use std::path::Path;
 
 const MAX_OBJECT_PALETTE_ENTRIES: usize = 256;
 const MAX_CHARACTER_PALETTE_ENTRIES: usize = 64;
+const BIPED_GROUP: u32 = u32::from_be_bytes(*b"bipd");
 const VEHICLE_GROUP: u32 = u32::from_be_bytes(*b"vehi");
 const WEAPON_GROUP: u32 = u32::from_be_bytes(*b"weap");
 const CHARACTER_GROUP: u32 = u32::from_be_bytes(*b"char");
@@ -15,9 +16,11 @@ const CHARACTER_GROUP: u32 = u32::from_be_bytes(*b"char");
 pub struct ExpandReport {
     pub scenarios_seen: usize,
     pub scenarios_changed: usize,
+    pub biped_catalog: usize,
     pub vehicle_catalog: usize,
     pub weapon_catalog: usize,
     pub character_catalog: usize,
+    pub biped_added_total: usize,
     pub vehicle_added_total: usize,
     pub weapon_added_total: usize,
     pub character_added_total: usize,
@@ -33,10 +36,14 @@ pub fn expand_all_mission_palettes(
     output: &Path,
     dry_run: bool,
 ) -> Result<ExpandReport> {
+    let bipeds = collect_tag_paths(archives, "biped")?;
     let vehicles = collect_tag_paths(archives, "vehicle")?;
     let weapons = collect_tag_paths(archives, "weapon")?;
     let characters = collect_ai_character_paths(archives)?;
     let scenarios = collect_scenario_entries(archives)?;
+    if bipeds.is_empty() {
+        bail!("no biped tags found under Meteorite/Content/Tags");
+    }
     if vehicles.is_empty() {
         bail!("no vehicle tags found under Meteorite/Content/Tags");
     }
@@ -53,9 +60,11 @@ pub fn expand_all_mission_palettes(
     let mut report = ExpandReport {
         scenarios_seen: scenarios.len(),
         scenarios_changed: 0,
+        biped_catalog: bipeds.len(),
         vehicle_catalog: vehicles.len(),
         weapon_catalog: weapons.len(),
         character_catalog: characters.len(),
+        biped_added_total: 0,
         vehicle_added_total: 0,
         weapon_added_total: 0,
         character_added_total: 0,
@@ -65,17 +74,12 @@ pub fn expand_all_mission_palettes(
         hostile_added: 0,
         lines: Vec::new(),
     };
-    let representative_count = characters
-        .iter()
-        .filter(|path| is_representative_character(path))
-        .count();
     report.lines.push(format!(
-        "Catalog: {} vehicle(s), {} weapon(s), {} AI character(s) ({} representative + {} padding, fill to {}); {} scenario(s) (palettes + hm_ally/hm_hostile)",
+        "Catalog: {} biped(s), {} vehicle(s), {} weapon(s), {} safe AI character(s) (fill to {}); {} scenario(s) (palettes + hm_ally/hm_hostile)",
+        bipeds.len(),
         vehicles.len(),
         weapons.len(),
         characters.len(),
-        representative_count,
-        characters.len().saturating_sub(representative_count),
         MAX_CHARACTER_PALETTE_ENTRIES,
         scenarios.len()
     ));
@@ -87,6 +91,14 @@ pub fn expand_all_mission_palettes(
             .with_context(|| format!("could not read {rel_path}"))?;
         let mut tag = TagFile::read_from_bytes(&bytes)
             .with_context(|| format!("could not parse {rel_path}"))?;
+        let biped_added = ensure_palette(
+            &mut tag,
+            "biped palette",
+            BIPED_GROUP,
+            &bipeds,
+            "name",
+            MAX_OBJECT_PALETTE_ENTRIES,
+        )?;
         let vehicle_added = ensure_palette(
             &mut tag,
             "vehicle palette",
@@ -105,7 +117,8 @@ pub fn expand_all_mission_palettes(
         )?;
         let character_fill = ensure_character_palette(&mut tag, &characters)?;
         let squads = ensure_demo_squads::ensure_demo_squads_on_tag(&mut tag, tag_path)?;
-        if vehicle_added == 0
+        if biped_added == 0
+            && vehicle_added == 0
             && weapon_added == 0
             && character_fill.added == 0
             && !squads.changed
@@ -113,6 +126,7 @@ pub fn expand_all_mission_palettes(
             continue;
         }
         report.scenarios_changed += 1;
+        report.biped_added_total += biped_added;
         report.vehicle_added_total += vehicle_added;
         report.weapon_added_total += weapon_added;
         report.character_added_total += character_fill.added;
@@ -121,8 +135,9 @@ pub fn expand_all_mission_palettes(
         report.ally_from_hostile_fallback += squads.ally_from_hostile_fallback;
         report.hostile_added += squads.hostile_added;
         report.lines.push(format!(
-            "{tag_path}: +{vehicle_added} vehicle(s), +{weapon_added} weapon(s), +{} character(s) (cap-skip {})",
-            character_fill.added, character_fill.skipped_cap
+            "{tag_path}: +{biped_added} biped(s), +{vehicle_added} vehicle(s), +{weapon_added} weapon(s), +{} character(s) (cap-skip {})",
+            character_fill.added,
+            character_fill.skipped_cap,
         ));
         report.lines.extend(squads.lines);
         if dry_run {
@@ -176,12 +191,6 @@ fn ensure_character_palette(
         .iter()
         .filter(|path| !existing.contains(path.as_str()))
         .collect();
-    if missing.is_empty() {
-        return Ok(CharacterFill {
-            added: 0,
-            skipped_cap: 0,
-        });
-    }
     let room = MAX_CHARACTER_PALETTE_ENTRIES.saturating_sub(existing.len());
     let (take, skipped_cap) = if missing.len() > room {
         (&missing[..room], missing.len() - room)
@@ -195,10 +204,7 @@ fn ensure_character_palette(
         take,
         "reference",
     )?;
-    Ok(CharacterFill {
-        added,
-        skipped_cap,
-    })
+    Ok(CharacterFill { added, skipped_cap })
 }
 
 fn ensure_palette(

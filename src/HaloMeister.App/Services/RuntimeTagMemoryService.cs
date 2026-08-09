@@ -38,6 +38,8 @@ public sealed class RuntimeTagMemoryService : IDisposable
     private RuntimeIdentity? _identity;
     private IReadOnlyList<RuntimeTagEntry>? _tagCache;
     private DateTimeOffset _tagCacheExpires;
+    private Dictionary<uint, string>? _stringIdNameCache;
+    private DateTimeOffset _stringIdNameCacheExpires;
 
     public static RuntimeTagMemoryService Current { get; } = new();
 
@@ -457,6 +459,20 @@ public sealed class RuntimeTagMemoryService : IDisposable
         if (stringId == 0 || stringId == uint.MaxValue)
             return false;
 
+        return GetStringIdNameMap().TryGetValue(stringId, out name);
+    }
+
+    /// <summary>
+    /// Builds (and briefly caches) the reverse string-id map. Variant pickers
+    /// resolve many ids in a row; reading the full registry per lookup is too
+    /// expensive because name storage alone is tens of megabytes.
+    /// </summary>
+    private Dictionary<uint, string> GetStringIdNameMap()
+    {
+        if (_stringIdNameCache is not null &&
+            DateTimeOffset.UtcNow < _stringIdNameCacheExpires)
+            return _stringIdNameCache;
+
         EnsureConnected();
         GameBuildProfile profile = BuildProfile;
         long storageAddress = checked((long)ReadUInt64(
@@ -467,11 +483,11 @@ public sealed class RuntimeTagMemoryService : IDisposable
             _moduleBase + profile.StringIdStringsRva));
         uint count = ReadUInt32(_moduleBase + profile.StringIdCountRva);
         if (storageAddress <= 0 || stringsAddress <= 0 || count == 0)
-            return false;
+            return [];
         if (storageUsed == 0 || storageUsed > StringIdStorageCapacity)
-            return false;
+            return [];
         if (count < StringIdBuiltinCount || count > StringIdMaxEntries)
-            return false;
+            return [];
 
         byte[] storage = ReadBytes(storageAddress, (int)storageUsed);
         byte[] strings = ReadBytes(stringsAddress, checked((int)count * 8));
@@ -479,6 +495,7 @@ public sealed class RuntimeTagMemoryService : IDisposable
             _moduleBase + profile.StringIdBuiltinTableRva,
             StringIdBuiltinCount * 16);
 
+        var map = new Dictionary<uint, string>((int)count);
         for (int index = 0; index < (int)count; index++)
         {
             uint id = index < StringIdBuiltinCount
@@ -487,23 +504,22 @@ public sealed class RuntimeTagMemoryService : IDisposable
                 : checked(
                     StringIdSetZeroBuiltinCount +
                     (uint)(index - StringIdBuiltinCount));
-            if (id != stringId)
-                continue;
 
             ulong namePointer = BinaryPrimitives.ReadUInt64LittleEndian(
                 strings.AsSpan(index * 8, 8));
             if (namePointer < (ulong)storageAddress)
-                return false;
+                continue;
             ulong relative = namePointer - (ulong)storageAddress;
             if (relative > uint.MaxValue || relative >= storageUsed)
-                return false;
+                continue;
             if (!TryReadStorageName(storage, (uint)relative, out ReadOnlySpan<byte> bytes))
-                return false;
-            name = Encoding.UTF8.GetString(bytes);
-            return true;
+                continue;
+            map[id] = Encoding.UTF8.GetString(bytes);
         }
 
-        return false;
+        _stringIdNameCache = map;
+        _stringIdNameCacheExpires = DateTimeOffset.UtcNow.AddSeconds(30);
+        return map;
     }
 
     public byte[] ReadBytes(long address, int count)
@@ -633,6 +649,8 @@ public sealed class RuntimeTagMemoryService : IDisposable
         _identity = null;
         _tagCache = null;
         _tagCacheExpires = default;
+        _stringIdNameCache = null;
+        _stringIdNameCacheExpires = default;
         if (wasConnected)
             ConnectionChanged?.Invoke(this, EventArgs.Empty);
     }

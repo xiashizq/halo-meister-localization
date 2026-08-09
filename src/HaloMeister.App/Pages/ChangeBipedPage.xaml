@@ -6,7 +6,6 @@
 
     <ScrollViewer HorizontalScrollBarVisibility="Disabled">
         <StackPanel
-            MaxWidth="1180"
             Padding="24"
             HorizontalAlignment="Stretch"
             Spacing="18">
@@ -16,14 +15,9 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Spacing="4">
-                    <TextBlock
-                        Style="{ThemeResource TitleTextBlockStyle}"
-                        Text="{i18n:Loc Key='change_biped.change_character'}" />
-                    <TextBlock
-                        Style="{StaticResource LivePageDescriptionStyle}"
-                        Text="{i18n:Loc Key='change_biped.switch_to_a_loaded_character_ai_bipeds_ma_7f6d33'}" />
-                </StackPanel>
+                <TextBlock
+                    Style="{ThemeResource TitleTextBlockStyle}"
+                    Text="{i18n:Loc Key='change_biped.change_character'}" />
                 <Button
                     x:Name="ConnectScanButton"
                     Grid.Column="1"
@@ -32,16 +26,14 @@
                     Content="{i18n:Loc Key='change_biped.scan_mission'}"
                     Style="{StaticResource AccentButtonStyle}" />
             </Grid>
-
-            <InfoBar
-                IsClosable="False"
-                IsOpen="True"
-                Message="{i18n:Loc Key='change_biped.this_tool_does_not_work_yet_and_is_disabl_86a291'}"
-                Severity="Warning"
-                Title="{i18n:Loc Key='change_biped.not_working_yet'}" />
+            <TextBlock
+                HorizontalAlignment="Stretch"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{i18n:Loc Key='change_biped.switch_to_a_loaded_character_ai_bipeds_ma_7f6d33'}"
+                TextWrapping="Wrap" />
 
             <Border
-                Padding="14"
+                Padding="16,14"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
@@ -108,26 +100,33 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <StackPanel
+                    <Grid
                         Grid.Column="3"
                         VerticalAlignment="Center"
-                        Orientation="Horizontal"
-                        Spacing="10">
-                        <Button
-                            x:Name="RefreshButton"
-                            Click="OnRefresh"
-                            Content="{i18n:Loc Key='change_biped.refresh'}"
-                            IsEnabled="False" />
+                        ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="22" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
                         <ProgressRing
                             x:Name="BusyRing"
                             Width="22"
                             Height="22"
                             IsActive="False" />
-                    </StackPanel>
+                        <Button
+                            x:Name="RefreshButton"
+                            Grid.Column="1"
+                            MinWidth="72"
+                            Click="OnRefresh"
+                            Content="{i18n:Loc Key='change_biped.refresh'}"
+                            IsEnabled="False" />
+                    </Grid>
                 </Grid>
             </Border>
 
-            <Grid ColumnSpacing="18">
+            <Grid
+                Height="580"
+                ColumnSpacing="18">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="390" />
                     <ColumnDefinition Width="*" />
@@ -164,15 +163,20 @@
                         <ListView
                             x:Name="BipedList"
                             Grid.Row="1"
-                            Height="540"
                             IsItemClickEnabled="False"
                             SelectionChanged="OnBipedSelectionChanged"
-                            SelectionMode="Single">
+                            SelectionMode="Single"
+                            ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="12,4" />
+                                    <Setter Property="MinHeight" Value="0" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid
-                                        Padding="6,5"
-                                        ColumnSpacing="10">
+                                    <Grid ColumnSpacing="10">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
@@ -183,7 +187,6 @@
                                                 Text="{Binding Name}"
                                                 TextTrimming="CharacterEllipsis" />
                                             <TextBlock
-                                                MaxWidth="285"
                                                 FontFamily="Consolas"
                                                 FontSize="11"
                                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -207,107 +210,175 @@
                     </Grid>
                 </Border>
 
-                <StackPanel Grid.Column="1" Spacing="14">
-                    <Border
-                        Padding="20"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1"
-                        CornerRadius="8">
-                        <StackPanel Spacing="14">
-                            <StackPanel Spacing="3">
-                                <TextBlock
-                                    x:Name="SelectedNameText"
-                                    Style="{ThemeResource SubtitleTextBlockStyle}"
-                                    Text="{i18n:Loc Key='change_biped.select_a_character'}" />
-                                <TextBlock
-                                    x:Name="SelectedCategoryText"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <TextBlock
-                                    x:Name="SelectedPathText"
-                                    FontFamily="Consolas"
-                                    FontSize="12"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
+                <Border
+                    Grid.Column="1"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                    <Grid Padding="16">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                            <Rectangle
-                                Height="1"
-                                Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
-
-                            <StackPanel Spacing="5">
-                                <TextBlock
-                                    Style="{ThemeResource BodyStrongTextBlockStyle}"
-                                    Text="{i18n:Loc Key='change_biped.switch_now'}" />
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="{i18n:Loc Key='change_biped.spawns_the_selected_biped_close_to_the_pl_82cc5c'}"
-                                    TextWrapping="Wrap" />
-                            </StackPanel>
-
-                            <Button
-                                x:Name="SwitchNowButton"
-                                HorizontalAlignment="Stretch"
-                                Click="OnSwitchNow"
-                                Content="{i18n:Loc Key='change_biped.switch_to_selected_character'}"
-                                IsEnabled="False"
-                                Style="{StaticResource AccentButtonStyle}" />
-
+                        <TextBlock
+                            Style="{ThemeResource BodyStrongTextBlockStyle}"
+                            Text="{i18n:Loc Key='change_biped.character_overlay_title'}" />
+                        <TextBlock
+                            Grid.Row="1"
+                            Margin="0,8,0,0"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="{i18n:Loc Key='change_biped.character_overlay_description'}"
+                            TextWrapping="Wrap" />
+                        <StackPanel
+                            Grid.Row="2"
+                            Margin="0,12,0,0"
+                            Spacing="6">
                             <TextBlock
-                                x:Name="SwitchAvailabilityText"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                TextWrapping="Wrap" />
-
-                            <Button
-                                x:Name="DisableSwitchButton"
-                                HorizontalAlignment="Left"
-                                Click="OnDisableSwitch"
-                                Content="{i18n:Loc Key='change_biped.turn_off_collision_switching'}"
-                                IsEnabled="False" />
+                                Style="{ThemeResource BodyStrongTextBlockStyle}"
+                                Text="{i18n:Loc Key='change_biped.third_person_variant'}" />
+                            <ComboBox
+                                x:Name="VariantPicker"
+                                HorizontalAlignment="Stretch"
+                                IsEnabled="False"
+                                UseLayoutRounding="True"
+                                SelectionChanged="OnVariantChanged">
+                                <ComboBox.ItemContainerStyle>
+                                    <Style TargetType="ComboBoxItem">
+                                        <Setter Property="MinHeight" Value="36" />
+                                        <Setter Property="Padding" Value="12,8" />
+                                        <Setter Property="UseLayoutRounding" Value="True" />
+                                    </Style>
+                                </ComboBox.ItemContainerStyle>
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock
+                                            VerticalAlignment="Center"
+                                            FontSize="14"
+                                            Text="{Binding Name}"
+                                            TextTrimming="CharacterEllipsis"
+                                            UseLayoutRounding="True" />
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
                         </StackPanel>
-                    </Border>
+                        <Button
+                            x:Name="ApplyTagRedirectButton"
+                            Grid.Row="3"
+                            Margin="0,12,0,0"
+                            HorizontalAlignment="Stretch"
+                            Click="OnApplyTagRedirect"
+                            Content="{i18n:Loc Key='change_biped.build_character_overlay'}"
+                            IsEnabled="False"
+                            Style="{StaticResource AccentButtonStyle}" />
 
-                    <Expander Header="{i18n:Loc Key='change_biped.advanced_change_the_next_checkpoint_spawn_8ee8f6'}">
-                        <Border
-                            Padding="18"
-                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="0,0,8,8">
-                            <StackPanel Spacing="12">
-                                <TextBlock
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    Text="{i18n:Loc Key='change_biped.patches_the_loaded_globals_scenario_playe_93bac5'}"
-                                    TextWrapping="Wrap" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button
-                                        x:Name="ApplyOverrideButton"
-                                        Click="OnApplyOverride"
-                                        Content="{i18n:Loc Key='change_biped.use_on_checkpoint_reload'}"
-                                        IsEnabled="False" />
-                                    <Button
-                                        x:Name="RestoreOverrideButton"
-                                        Click="OnRestoreOverride"
-                                        Content="{i18n:Loc Key='change_biped.restore_original_biped'}"
-                                        IsEnabled="False" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                    </Expander>
+                        <Grid
+                            Grid.Row="4"
+                            Margin="0,16,0,8"
+                            ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="220" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Style="{ThemeResource BodyStrongTextBlockStyle}"
+                                Text="{i18n:Loc Key='change_biped.character_overlay_list'}" />
+                            <Button
+                                x:Name="RefreshOverlaysButton"
+                                Grid.Column="1"
+                                HorizontalAlignment="Right"
+                                MinWidth="72"
+                                Click="OnRefreshCharacterOverlays"
+                                Content="{i18n:Loc Key='change_biped.refresh_character_overlays'}" />
+                        </Grid>
 
-                    <InfoBar
-                        x:Name="StatusBar"
-                        IsClosable="True"
-                        IsOpen="False" />
-
-                    <TextBlock
-                        x:Name="DiagnosticText"
-                        FontFamily="Consolas"
-                        FontSize="11"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap" />
-                </StackPanel>
+                        <ListView
+                            x:Name="CharacterOverlayList"
+                            Grid.Row="5"
+                            SelectionMode="None"
+                            ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="0,6" />
+                                    <Setter Property="MinHeight" Value="0" />
+                                    <Setter Property="Margin" Value="0" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="220" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="2">
+                                            <TextBlock
+                                                FontWeight="SemiBold"
+                                                Text="{Binding Name}"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                FontSize="11"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Text="{Binding Status}"
+                                                TextTrimming="CharacterEllipsis" />
+                                            <TextBlock
+                                                FontFamily="Consolas"
+                                                FontSize="11"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Text="{Binding SourceUtocPath}"
+                                                TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Right"
+                                            Orientation="Horizontal"
+                                            Spacing="6">
+                                            <Button
+                                                Width="64"
+                                                Click="OnInstallCharacterOverlay"
+                                                Content="{i18n:Loc Key='change_biped.install_character_overlay_action'}"
+                                                IsEnabled="{Binding CanInstall}"
+                                                Tag="{Binding}" />
+                                            <Button
+                                                Width="64"
+                                                Click="OnUninstallCharacterOverlay"
+                                                Content="{i18n:Loc Key='change_biped.uninstall_character_overlay_action'}"
+                                                IsEnabled="{Binding CanUninstall}"
+                                                Tag="{Binding}" />
+                                            <Button
+                                                Width="64"
+                                                Click="OnDeleteCharacterOverlay"
+                                                Content="{i18n:Loc Key='change_biped.delete_character_overlay_action'}"
+                                                IsEnabled="{Binding CanDelete}"
+                                                Tag="{Binding}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Border>
             </Grid>
+
+            <InfoBar
+                x:Name="StatusBar"
+                IsClosable="True"
+                IsOpen="False" />
+
+            <TextBlock
+                x:Name="DiagnosticText"
+                FontFamily="Consolas"
+                FontSize="11"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                TextWrapping="Wrap" />
         </StackPanel>
     </ScrollViewer>
 </Page>

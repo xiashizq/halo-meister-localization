@@ -29,16 +29,22 @@
                 Spacing="8">
                 <Button
                     x:Name="RefreshButton"
+                    Height="32"
+                    VerticalAlignment="Center"
                     Click="OnRefresh"
                     Content="{i18n:Loc Key='vehicle_workshop.refresh'}"
                     IsEnabled="False" />
                 <Button
                     x:Name="FullPalettesButton"
+                    Height="32"
+                    VerticalAlignment="Center"
                     Click="OnToggleFullPalettes"
                     Content="{i18n:Loc Key='vehicle_workshop.add_all_vehicles_weapons'}"
                     IsEnabled="False" />
                 <Button
                     x:Name="ScanButton"
+                    Height="32"
+                    VerticalAlignment="Center"
                     Click="OnScan"
                     Content="{i18n:Loc Key='vehicle_workshop.scan_vehicles'}"
                     IsEnabled="False"
@@ -47,6 +53,7 @@
                     x:Name="BusyRing"
                     Width="22"
                     Height="22"
+                    VerticalAlignment="Center"
                     IsActive="False" />
             </StackPanel>
         </Grid>
@@ -91,15 +98,37 @@
                         SelectionMode="Single">
                         <ListView.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Padding="4,7" Spacing="3">
-                                    <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                                    <TextBlock
-                                        FontFamily="Consolas"
-                                        FontSize="10"
-                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                        Text="{Binding TagPath}"
-                                        TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
+                                <Grid MinHeight="68" Padding="4,5" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="92" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border
+                                        Width="92"
+                                        Height="52"
+                                        Padding="4"
+                                        Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                        CornerRadius="6">
+                                        <Image
+                                            Source="{Binding ImageUri}"
+                                            Stretch="Uniform" />
+                                    </Border>
+                                    <StackPanel
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Spacing="2">
+                                        <TextBlock
+                                            FontWeight="SemiBold"
+                                            Text="{Binding Name}"
+                                            TextTrimming="CharacterEllipsis" />
+                                        <TextBlock
+                                            FontFamily="Consolas"
+                                            FontSize="10"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="{Binding TagPath}"
+                                            TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
@@ -140,19 +169,40 @@
                         Padding="24"
                         Spacing="12"
                         Visibility="Collapsed">
-                        <TextBlock
-                            x:Name="SelectedVehicleText"
-                            Style="{ThemeResource SubtitleTextBlockStyle}" />
-                        <TextBlock
-                            x:Name="SelectedPathText"
-                            FontFamily="Consolas"
-                            FontSize="11"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            TextWrapping="Wrap" />
-                        <TextBlock
-                            x:Name="SelectedDatumText"
-                            FontFamily="Consolas"
-                            FontSize="11" />
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border
+                                Height="128"
+                                Padding="12"
+                                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                CornerRadius="8">
+                                <Image
+                                    x:Name="SelectedVehicleImage"
+                                    Stretch="Uniform" />
+                            </Border>
+                            <StackPanel
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Spacing="6">
+                                <TextBlock
+                                    x:Name="SelectedVehicleText"
+                                    Style="{ThemeResource SubtitleTextBlockStyle}"
+                                    TextWrapping="Wrap" />
+                                <TextBlock
+                                    x:Name="SelectedPathText"
+                                    FontFamily="Consolas"
+                                    FontSize="11"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap" />
+                                <TextBlock
+                                    x:Name="SelectedDatumText"
+                                    FontFamily="Consolas"
+                                    FontSize="11" />
+                            </StackPanel>
+                        </Grid>
                         <Border
                             Padding="16"
                             Background="{ThemeResource LayerFillColorDefaultBrush}"

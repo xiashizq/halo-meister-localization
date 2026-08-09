@@ -14,19 +14,22 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
     private readonly PlayerBipedService _bipeds = new();
     private IReadOnlyList<PlayerBipedChoice> _allChoices = [];
     private PlayerBipedChoice? _selected;
+    private PlayerBipedVariantChoice? _selectedVariant;
+    private int _variantRequestVersion;
     private bool _busy;
     private bool _hasScanned;
-    private bool _collisionSwitchEnabled;
 
     public ChangeBipedPage()
     {
         InitializeComponent();
         _game.ConnectionChanged += OnGameConnectionChanged;
+        RefreshCharacterOverlayList();
         UpdateChrome();
     }
 
     public void OnActivated()
     {
+        RefreshCharacterOverlayList();
         UpdateChrome();
         if (_game.IsConnected && !_hasScanned)
             _ = ScanAsync(connectGame: false);
@@ -71,62 +74,97 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
         SelectionChangedEventArgs e)
     {
         _selected = BipedList.SelectedItem as PlayerBipedChoice;
-        ShowSelection();
+        _ = LoadVariantsForSelectionAsync(++_variantRequestVersion);
+        UpdateChrome();
     }
 
-    private async void OnSwitchNow(object sender, RoutedEventArgs e)
+    private void OnVariantChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _selectedVariant = VariantPicker.SelectedItem as PlayerBipedVariantChoice;
+        UpdateChrome();
+    }
+
+    private async void OnApplyTagRedirect(object sender, RoutedEventArgs e)
     {
         if (_selected is not { } selected) return;
 
         await RunBusy(async () =>
         {
-            ScriptExecutionResult result =
-                await _bipeds.SpawnForBumpPossessionAsync(selected);
-            _collisionSwitchEnabled = true;
+            NativeTagModExportResult overlay =
+                await _bipeds.ExportTagRedirectOverlayAsync(selected, _selectedVariant);
+            RefreshCharacterOverlayList();
             ShowStatus(
-                L.Format("change_biped.spawned_switch_enabled", selected.Name),
+                L.Get("change_biped.character_overlay_built"),
                 InfoBarSeverity.Success);
             DiagnosticText.Text =
-                $"request={result.RequestId} · outcome={result.Outcome} · " +
-                $"elapsed={result.Elapsed.TotalSeconds:F2}s · {result.Message}";
+                $"overlay={overlay.UtocPath}; variant={_selectedVariant?.Name ?? "(default)"}";
         });
     }
 
-    private async void OnDisableSwitch(object sender, RoutedEventArgs e)
+    private void OnRefreshCharacterOverlays(object sender, RoutedEventArgs e)
     {
+        RefreshCharacterOverlayList();
+        ShowStatus(
+            L.Format(
+                "change_biped.character_overlays_refreshed",
+                CharacterOverlayList.Items.Count),
+            InfoBarSeverity.Success);
+    }
+
+    private async void OnInstallCharacterOverlay(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: CharacterOverlayPackage package })
+            return;
+        if (string.IsNullOrWhiteSpace(package.SourceUtocPath))
+            return;
+
         await RunBusy(async () =>
         {
-            ScriptExecutionResult result =
-                await _bipeds.DisableBumpPossessionAsync();
-            _collisionSwitchEnabled = false;
-            ShowStatus(L.Get("change_biped.collision_switch_off"), InfoBarSeverity.Success);
+            NativeTagModInstallResult result = await Task.Run(
+                () => _bipeds.InstallTagRedirectOverlay(package.SourceUtocPath!));
+            RefreshCharacterOverlayList();
+            ShowStatus(
+                L.Get("change_biped.character_overlay_installed"),
+                InfoBarSeverity.Success);
             DiagnosticText.Text =
-                $"request={result.RequestId} · outcome={result.Outcome} · " +
-                $"elapsed={result.Elapsed.TotalSeconds:F2}s · {result.Message}";
+                $"installed={string.Join(", ", result.InstalledFiles)}";
         });
     }
 
-    private async void OnApplyOverride(object sender, RoutedEventArgs e)
+    private async void OnUninstallCharacterOverlay(object sender, RoutedEventArgs e)
     {
-        if (_selected is not { } selected) return;
+        if (sender is not FrameworkElement { Tag: CharacterOverlayPackage package })
+            return;
 
         await RunBusy(async () =>
         {
-            await Task.Run(() => _bipeds.Apply(selected));
+            IReadOnlyList<string> removed = await Task.Run(
+                () => _bipeds.RemoveTagRedirectOverlay(package.Name));
+            if (removed.Count == 0)
+                throw new FileNotFoundException(
+                    L.Get("change_biped.character_overlay_not_installed"));
+            RefreshCharacterOverlayList();
             ShowStatus(
-                L.Format("change_biped.next_checkpoint_will_create", selected.Name),
+                L.Get("change_biped.character_overlay_removed"),
                 InfoBarSeverity.Success);
+            DiagnosticText.Text = $"removed={string.Join(", ", removed)}";
         });
     }
 
-    private async void OnRestoreOverride(object sender, RoutedEventArgs e)
+    private async void OnDeleteCharacterOverlay(object sender, RoutedEventArgs e)
     {
+        if (sender is not FrameworkElement { Tag: CharacterOverlayPackage package })
+            return;
+
         await RunBusy(async () =>
         {
-            await Task.Run(_bipeds.Restore);
+            IReadOnlyList<string> removed = await Task.Run(
+                () => _bipeds.DeleteCharacterOverlayPackage(package.Name));
+            RefreshCharacterOverlayList();
             ShowStatus(
-                L.Get("change_biped.restored_original_representation"),
+                L.Get("change_biped.character_overlay_deleted"),
                 InfoBarSeverity.Success);
+            DiagnosticText.Text = $"deleted={string.Join(", ", removed)}";
         });
     }
 
@@ -136,11 +174,52 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
         SearchBox.IsEnabled = true;
         ApplyFilter();
 
-        PlayerBipedChoice? active = session.Choices.FirstOrDefault(choice =>
-            choice.BipedTag.Index == session.ActiveBiped.Index);
-        _selected = active ?? session.Choices.FirstOrDefault();
+        _selected = session.Choices.FirstOrDefault();
         BipedList.SelectedItem = _selected;
-        ShowSelection();
+        _ = LoadVariantsForSelectionAsync(++_variantRequestVersion);
+        RefreshCharacterOverlayList();
+        UpdateChrome();
+    }
+
+    private async Task LoadVariantsForSelectionAsync(int requestVersion)
+    {
+        PlayerBipedChoice? selected = _selected;
+        _selectedVariant = null;
+        VariantPicker.ItemsSource = null;
+        VariantPicker.IsEnabled = false;
+        UpdateChrome();
+        if (selected is null || !_game.IsConnected)
+            return;
+
+        try
+        {
+            IReadOnlyList<PlayerBipedVariantChoice> variants = await Task.Run(
+                () => _bipeds.ReadVariants(selected));
+            if (requestVersion != _variantRequestVersion ||
+                _selected?.BipedTag.Index != selected.BipedTag.Index)
+                return;
+
+            VariantPicker.ItemsSource = variants;
+            VariantPicker.SelectedIndex = variants.Count > 0 ? 0 : -1;
+            _selectedVariant = VariantPicker.SelectedItem as PlayerBipedVariantChoice;
+        }
+        catch
+        {
+            if (requestVersion != _variantRequestVersion ||
+                _selected?.BipedTag.Index != selected.BipedTag.Index)
+                return;
+            VariantPicker.ItemsSource = null;
+            _selectedVariant = null;
+        }
+
+        UpdateChrome();
+    }
+
+    private void RefreshCharacterOverlayList()
+    {
+        CharacterOverlayPackage[] packages =
+            _bipeds.GetCharacterOverlayPackages().ToArray();
+        CharacterOverlayList.ItemsSource = packages;
     }
 
     private void ApplyFilter()
@@ -164,16 +243,6 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
             BipedList.SelectedItem = _selected;
     }
 
-    private void ShowSelection()
-    {
-        SelectedNameText.Text = _selected?.Name ?? L.Get("change_biped.select_a_character");
-        SelectedCategoryText.Text = _selected is null
-            ? L.Get("change_biped.choose_loaded_biped")
-            : $"{_selected.Category}{(_selected.IsOriginal ? L.Get("change_biped.current_player_suffix") : string.Empty)}";
-        SelectedPathText.Text = _selected?.TagPath ?? string.Empty;
-        UpdateChrome();
-    }
-
     private async Task RunBusy(Func<Task> action)
     {
         if (_busy) return;
@@ -187,9 +256,9 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
         }
         catch (Exception ex)
         {
-            ShowStatus(ex.Message, InfoBarSeverity.Error);
+            ShowStatus(FormatUserFacingError(ex), InfoBarSeverity.Error);
             DiagnosticText.Text =
-                $"{DateTimeOffset.Now:HH:mm:ss} · {ex.GetType().Name} · {ex.Message}";
+                $"{DateTimeOffset.Now:HH:mm:ss} · {FormatUserFacingError(ex)}";
         }
         finally
         {
@@ -200,7 +269,11 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
     }
 
     private void OnGameConnectionChanged(object? sender, EventArgs e)
-        => DispatcherQueue.TryEnqueue(UpdateChrome);
+        => DispatcherQueue.TryEnqueue(() =>
+        {
+            RefreshCharacterOverlayList();
+            UpdateChrome();
+        });
 
     private void UpdateChrome()
     {
@@ -233,22 +306,19 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
         ConnectScanButton.Content = L.Get("change_biped.scan_mission");
         ConnectScanButton.IsEnabled = !_busy && gameReady;
         RefreshButton.IsEnabled = !_busy && gameReady && _hasScanned;
-
-        SwitchNowButton.IsEnabled =
-            !_busy && _selected is not null && gameReady && bridgeReady;
-        ApplyOverrideButton.IsEnabled =
-            !_busy && _selected is not null && gameReady && _hasScanned;
-        RestoreOverrideButton.IsEnabled = !_busy && _bipeds.CanRestore;
-        DisableSwitchButton.IsEnabled =
-            !_busy && gameReady && bridgeReady && _collisionSwitchEnabled;
-
-        SwitchAvailabilityText.Text = !gameReady
-            ? L.Get("change_biped.connect_and_scan_first")
-            : !bridgeReady
-                ? bridge.Summary
-                : _selected is null
-                    ? L.Get("change_biped.select_from_mission_list")
-                    : L.Get("change_biped.ready_to_switch");
+        RefreshOverlaysButton.IsEnabled = !_busy;
+        VariantPicker.IsEnabled =
+            !_busy &&
+            gameReady &&
+            _hasScanned &&
+            _selected is not null &&
+            VariantPicker.Items.Count > 0;
+        ApplyTagRedirectButton.IsEnabled =
+            !_busy &&
+            gameReady &&
+            _hasScanned &&
+            _selected is not null &&
+            _selectedVariant is not null;
     }
 
     private static void SetState(
@@ -266,12 +336,54 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
     {
         StatusBar.Title = severity switch
         {
-            InfoBarSeverity.Error => L.Get("change_biped.switch_failed"),
-            InfoBarSeverity.Success => L.Get("change_biped.switch_success"),
+            InfoBarSeverity.Error => L.Get("change_biped.character_overlay_failed"),
+            InfoBarSeverity.Success => L.Get("change_biped.character_overlay_success"),
             _ => L.Get("change_biped.change_character"),
         };
         StatusBar.Message = message;
         StatusBar.Severity = severity;
         StatusBar.IsOpen = true;
+    }
+
+    private static string FormatUserFacingError(Exception ex)
+    {
+        if (IsFileInUse(ex))
+            return L.Get("change_biped.character_overlay_file_in_use");
+        if (ex is DirectoryNotFoundException)
+            return L.Get("change_biped.character_overlay_game_folder_missing");
+        if (ex is FileNotFoundException)
+            return string.IsNullOrWhiteSpace(ex.Message) || LooksTechnical(ex.Message)
+                ? L.Get("change_biped.character_overlay_not_found")
+                : ex.Message;
+        if (ex is InvalidOperationException or InvalidDataException or UnauthorizedAccessException or IOException)
+        {
+            if (!string.IsNullOrWhiteSpace(ex.Message) && !LooksTechnical(ex.Message))
+                return ex.Message;
+        }
+        return L.Get("change_biped.character_overlay_generic_error");
+    }
+
+    private static bool LooksTechnical(string message) =>
+        message.Contains("[bipd]", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("[matg]", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("globals/globals", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains(".utoc", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains(".ucas", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("string-id", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("Native exporter", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("tag reference", StringComparison.OrdinalIgnoreCase) ||
+        message.Contains("0x", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFileInUse(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is IOException io &&
+                ((io.HResult & 0xFFFF) is 32 or 33 ||
+                 io.Message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase) ||
+                 io.Message.Contains("正由另一进程使用", StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+        return false;
     }
 }

@@ -8,21 +8,60 @@ public sealed record LoadableVehicle(string Name, RuntimeTagEntry Tag)
 {
     public string DisplayName => Name;
     public string TagPath => Tag.Name;
+    public string ImageUri => VehicleIconUri(Tag.Name);
     public string Category => Categorize(Tag.Name);
     public string VariantSummary => "Loaded vehicle";
     public string SearchText => $"{DisplayName} {TagPath} {Category}";
     public string Detail => $"[vehi] 0x{RuntimeTagMemoryService.BuildRuntimeDatum(Tag):X8}";
 
+    /// <summary>
+    /// Local wiki / concept preview for known vehicle families; otherwise the
+    /// shared missing.png placeholder (never a wrong sibling vehicle).
+    /// </summary>
+    public static string VehicleIconUri(string tagPath)
+    {
+        string path = tagPath.Replace('\\', '/').ToLowerInvariant();
+        string icon =
+            path.Contains("warthog", StringComparison.Ordinal) ? "warthog.png" :
+            path.Contains("ghost", StringComparison.Ordinal) ? "ghost.png" :
+            path.Contains("banshee", StringComparison.Ordinal) ? "banshee.png" :
+            path.Contains("scorpion", StringComparison.Ordinal) ? "scorpion.png" :
+            path.Contains("wraith", StringComparison.Ordinal) ? "wraith.png" :
+            path.Contains("pelican", StringComparison.Ordinal) ? "pelican.png" :
+            path.Contains("mongoose", StringComparison.Ordinal) ? "mongoose.png" :
+            path.Contains("chopper", StringComparison.Ordinal) ? "chopper.png" :
+            path.Contains("hornet", StringComparison.Ordinal) ? "hornet.png" :
+            path.Contains("falcon", StringComparison.Ordinal) ? "falcon.png" :
+            path.Contains("phantom", StringComparison.Ordinal) ? "phantom.png" :
+            path.Contains("seraph", StringComparison.Ordinal) ? "seraph.png" :
+            path.Contains("sabre", StringComparison.Ordinal) ? "sabre.png" :
+            path.Contains("longsword", StringComparison.Ordinal) ? "longsword.png" :
+            path.Contains("scarab", StringComparison.Ordinal) ? "scarab.png" :
+            path.Contains("revenant", StringComparison.Ordinal) ? "revenant.png" :
+            path.Contains("shade", StringComparison.Ordinal) ? "shade.png" :
+            path.Contains("ag_turret", StringComparison.Ordinal) ||
+            path.Contains("burden_of_proof", StringComparison.Ordinal) ? "ag_turret.png" :
+            path.Contains("watchtower", StringComparison.Ordinal) ? "watchtower.png" :
+            path.Contains("weevil", StringComparison.Ordinal) ||
+            path.Contains("guntower", StringComparison.Ordinal) ||
+            path.Contains("gun_tower", StringComparison.Ordinal) ? "weevil.png" :
+            path.Contains("tuning_fork", StringComparison.Ordinal) ||
+            path.Contains("spirit", StringComparison.Ordinal) ? "spirit.png" :
+            "missing.png";
+        return $"ms-appx:///Assets/VehicleIcons/{icon}";
+    }
+
     private static string Categorize(string path)
     {
         string value = path.Replace('\\', '/').ToLowerInvariant();
         if (ContainsAny(value, "banshee", "pelican", "spirit", "phantom",
-                "hornet", "seraph"))
+                "hornet", "falcon", "seraph", "sabre", "longsword", "tuning_fork"))
             return "Aircraft";
         if (ContainsAny(value, "warthog", "ghost", "scorpion", "wraith",
-                "mongoose", "chopper"))
+                "mongoose", "chopper", "revenant", "scarab"))
             return "Ground";
-        if (ContainsAny(value, "turret", "shade", "gun_tower"))
+        if (ContainsAny(value, "turret", "shade", "gun_tower", "guntower",
+                "watchtower", "weevil", "ag_turret", "burden_of_proof"))
             return "Turrets";
         return "Other";
     }
@@ -36,9 +75,8 @@ public sealed record VehicleModelVariant(
     uint StringId,
     string Name)
 {
-    public string Detail => Index == 0
-        ? L.Get("vehicle_workshop.variant_default")
-        : L.Format("vehicle_workshop.variant_numbered", Index + 1);
+    public string Detail =>
+        $"Model variant {Index + 1:N0} · string-id 0x{StringId:X8}";
 }
 
 public sealed record VehicleVariantCatalog(

@@ -24,6 +24,7 @@ public sealed partial class CheatGlobalsPage : Page, IActivatablePage
     private bool _loadingTeam;
     private PlayerTeamState? _teamState;
     private int _statusVersion;
+    private string _section = "quick-cheats";
 
     public CheatGlobalsPage()
     {
@@ -37,7 +38,28 @@ public sealed partial class CheatGlobalsPage : Page, IActivatablePage
         GlobalAllegianceTeamComboBox.SelectedItem = globalTeams.FirstOrDefault(
             option => option.Value == AllegianceDemoService.HostileTeam)
             ?? globalTeams.FirstOrDefault();
+        ShowSection(_section);
         UpdateBridgeStatus();
+        UpdateButtons();
+    }
+
+    public void ShowSection(string section)
+    {
+        _section = section switch
+        {
+            "player-traits" => "player-traits",
+            "allegiance" => "allegiance",
+            _ => "quick-cheats",
+        };
+
+        QuickCheatsPanel.Visibility =
+            _section == "quick-cheats" ? Visibility.Visible : Visibility.Collapsed;
+        PlayerTraitsPanel.Visibility =
+            _section == "player-traits" ? Visibility.Visible : Visibility.Collapsed;
+        AllegiancePanel.Visibility =
+            _section == "allegiance" ? Visibility.Visible : Visibility.Collapsed;
+
+        UpdateSummary();
         UpdateButtons();
     }
 
@@ -334,7 +356,7 @@ public sealed partial class CheatGlobalsPage : Page, IActivatablePage
         CheatsEmptyPanel.Visibility =
             items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         DispatcherQueue.TryEnqueue(() =>
-            CheatsScrollViewer.ChangeView(null, 0, null, true));
+            QuickCheatsPanel.ChangeView(null, 0, null, true));
         _loading = false;
         UpdateSummary();
         UpdateButtons();
@@ -351,7 +373,7 @@ public sealed partial class CheatGlobalsPage : Page, IActivatablePage
         ModifiersEmptyPanel.Visibility =
             items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         DispatcherQueue.TryEnqueue(() =>
-            ModifiersScrollViewer.ChangeView(null, 0, null, true));
+            PlayerTraitsPanel.ChangeView(null, 0, null, true));
         _loadingModifiers = false;
         UpdateSummary();
         UpdateButtons();
@@ -399,24 +421,32 @@ public sealed partial class CheatGlobalsPage : Page, IActivatablePage
 
     private void UpdateSummary()
     {
-        int enabled = _items.Count(item => item.IsEnabled);
-        int modified = _modifierItems.Count(item =>
-            !item.SelectedOption.Label.Equals(
-                "Default",
-                StringComparison.OrdinalIgnoreCase));
-        string team = _teamState is null
-            ? L.Get("cheat_globals.allegiance_not_loaded")
-            : L.Format("cheat_globals.allegiance_label", _teamState.Selected.Label);
-        string cheats = _items.Count == 0
-            ? L.Get("cheat_globals.cheats_not_loaded")
-            : L.Format("cheat_globals.cheats_active_summary", enabled, _items.Count);
-        string traits = _modifierItems.Count == 0
-            ? L.Get("cheat_globals.traits_not_loaded")
-            : L.Format(
-                "cheat_globals.traits_non_default_summary",
-                modified,
-                _modifierItems.Count);
-        SummaryText.Text = $"{cheats} · {traits} · {team}";
+        SummaryText.Text = _section switch
+        {
+            "player-traits" =>
+                _modifierItems.Count == 0
+                    ? L.Get("cheat_globals.traits_not_loaded")
+                    : L.Format(
+                        "cheat_globals.traits_non_default_summary",
+                        _modifierItems.Count(item =>
+                            !item.SelectedOption.Label.Equals(
+                                "Default",
+                                StringComparison.OrdinalIgnoreCase)),
+                        _modifierItems.Count),
+            "allegiance" =>
+                _teamState is null
+                    ? L.Get("cheat_globals.allegiance_not_loaded")
+                    : L.Format(
+                        "cheat_globals.allegiance_label",
+                        _teamState.Selected.Label),
+            _ =>
+                _items.Count == 0
+                    ? L.Get("cheat_globals.cheats_not_loaded")
+                    : L.Format(
+                        "cheat_globals.cheats_active_summary",
+                        _items.Count(item => item.IsEnabled),
+                        _items.Count),
+        };
     }
 
     private void UpdateButtons()

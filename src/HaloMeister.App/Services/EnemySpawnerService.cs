@@ -232,6 +232,18 @@ public sealed class EnemySpawnerService : IDisposable
         IReadOnlyList<MemoryPatch> objectivePatches = clearObjective
             ? BeginClearSquadObjective(plan.Template)
             : [];
+        // Clear task "suppress combat" and squad blind/deaf/braindead so
+        // actor_new inherits a fightable order (not a muted companion escort).
+        // Best-effort only: never abort the spawn if the patch fails.
+        IReadOnlyList<MemoryPatch> unsuppressPatches = [];
+        try
+        {
+            unsuppressPatches = BeginUnsuppressScaffoldCombat(plan.Template);
+        }
+        catch
+        {
+            unsuppressPatches = [];
+        }
         try
         {
             // ai_team payload carries squad team override so actor_new is born
@@ -244,15 +256,20 @@ public sealed class EnemySpawnerService : IDisposable
                 plan.Payload,
                 TimeSpan.FromSeconds(20),
                 cancellationToken: cancellationToken);
-            return result with
-            {
-                Message = string.IsNullOrWhiteSpace(plan.Diagnosis.Summary)
-                    ? result.Message
-                    : $"{result.Message} {plan.Diagnosis.Summary}",
-            };
+            string message = string.IsNullOrWhiteSpace(plan.Diagnosis.Summary)
+                ? result.Message
+                : $"{result.Message} {plan.Diagnosis.Summary}";
+            if (unsuppressPatches.Count > 0)
+                message = $"{message} task=unsuppressed";
+            if (result.Outcome == ScriptOutcome.Failed)
+                AppendScaffoldDiagnosisLogLine(
+                    $"FAIL squad={plan.Diagnosis.SquadName} {result.Message}");
+            return result with { Message = message };
         }
         finally
         {
+            try { RestorePatches(unsuppressPatches); }
+            catch { /* best-effort */ }
             RestorePatches(objectivePatches);
         }
     }
@@ -353,6 +370,11 @@ public sealed class EnemySpawnerService : IDisposable
 
     private static void AppendScaffoldDiagnosisLog(SpawnScaffoldDiagnosis diagnosis)
     {
+        AppendScaffoldDiagnosisLogLine($"SPAWN {diagnosis}");
+    }
+
+    private static void AppendScaffoldDiagnosisLogLine(string line)
+    {
         try
         {
             string? directory = Path.GetDirectoryName(ScaffoldDiagnosisLogPath);
@@ -360,7 +382,7 @@ public sealed class EnemySpawnerService : IDisposable
                 Directory.CreateDirectory(directory);
             File.AppendAllText(
                 ScaffoldDiagnosisLogPath,
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] SPAWN {diagnosis}{Environment.NewLine}");
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {line}{Environment.NewLine}");
         }
         catch
         {
@@ -445,6 +467,100 @@ public sealed class EnemySpawnerService : IDisposable
             patches.Add(new MemoryPatch(address, original));
         }
         return patches;
+    }
+
+    // tasks_block.flags bit 4 = "suppress combat"
+    private const ushort TaskFlagSuppressCombat = 1 << 4;
+    // Also clear blind/deaf/braindead on the same word when present.
+    private const ushort TaskFlagMuteMask =
+        TaskFlagSuppressCombat | (1 << 6) | (1 << 7) | (1 << 8);
+    // squads_block.flags bits 0-2 = blind/deaf/braindead
+    private const uint SquadFlagMuteMask = 0b111;
+
+    private List<MemoryPatch> BeginUnsuppressScaffoldCombat(SpawnTemplate template)
+    {
+        var patches = new List<MemoryPatch>(2);
+        if (template.TaskFlagsAddress != 0)
+        {
+            ushort flags = unchecked((ushort)ReadInt16(template.TaskFlagsAddress));
+            ushort cleared = (ushort)(flags & ~TaskFlagMuteMask);
+            if (cleared != flags)
+            {
+                byte[] original = _memory.ReadBytes(template.TaskFlagsAddress, 2);
+                _memory.WriteVerified(
+                    template.TaskFlagsAddress,
+                    BitConverter.GetBytes(cleared));
+                patches.Add(new MemoryPatch(template.TaskFlagsAddress, original));
+            }
+        }
+
+        if (template.SquadFlagsAddress != 0)
+        {
+            uint flags = BinaryPrimitives.ReadUInt32LittleEndian(
+                _memory.ReadBytes(template.SquadFlagsAddress, 4));
+            uint cleared = flags & ~SquadFlagMuteMask;
+            if (cleared != flags)
+            {
+                byte[] original = _memory.ReadBytes(template.SquadFlagsAddress, 4);
+                Span<byte> bytes = stackalloc byte[4];
+                BinaryPrimitives.WriteUInt32LittleEndian(bytes, cleared);
+                _memory.WriteVerified(template.SquadFlagsAddress, bytes);
+                patches.Add(new MemoryPatch(template.SquadFlagsAddress, original));
+            }
+        }
+
+        return patches;
+    }
+
+    private long ResolveTaskFlagsAddress(
+        RuntimeTagEntry scenario,
+        RuntimeTagFieldValue objectives,
+        short objectiveIndex,
+        short taskIndex)
+    {
+        if (objectiveIndex < 0 ||
+            objectiveIndex >= objectives.ChildCount ||
+            taskIndex < 0)
+        {
+            return 0;
+        }
+
+        RuntimeTagFieldValue? tasks = ReadBlock(
+            scenario,
+            objectives,
+            objectiveIndex).FirstOrDefault(field =>
+                field.ChildBlockDefinition == "tasks_block" &&
+                field.CanOpenBlock);
+        if (tasks is null || taskIndex >= tasks.ChildCount)
+            return 0;
+
+        RuntimeTagFieldValue? flags = ReadBlock(scenario, tasks, taskIndex)
+            .FirstOrDefault(field =>
+                field.Type == "word_flags" &&
+                string.Equals(
+                    CleanFieldName(field.Name),
+                    "flags",
+                    StringComparison.OrdinalIgnoreCase) &&
+                field.Size >= 2);
+        return flags?.Address ?? 0;
+    }
+
+    private bool TaskHasFlag(
+        RuntimeTagEntry scenario,
+        RuntimeTagFieldValue objectives,
+        short objectiveIndex,
+        short taskIndex,
+        ushort flag)
+    {
+        long address = ResolveTaskFlagsAddress(
+            scenario,
+            objectives,
+            objectiveIndex,
+            taskIndex);
+        if (address == 0)
+            return false;
+        ushort flags = unchecked((ushort)ReadInt16(address));
+        return (flags & flag) != 0;
     }
 
     private void RestorePatches(IReadOnlyList<MemoryPatch> patches)
@@ -1137,12 +1253,35 @@ public sealed class EnemySpawnerService : IDisposable
                     "initial task",
                     StringComparison.OrdinalIgnoreCase));
             short objectiveIndex = ReadOptionalShort(squad, "initial objective") ?? -1;
+            short taskIndex = ReadOptionalShort(squad, "initial task") ?? -1;
             bool hasCombatObjective = objectiveIndex >= 0;
             bool followsPlayer =
                 followPlayer &&
                 isFriendlyTeam &&
                 objectives is not null &&
                 SquadFollowsPlayer(scenario, squad, objectives);
+            bool suppressesCombat =
+                objectives is not null &&
+                TaskHasFlag(
+                    scenario,
+                    objectives,
+                    objectiveIndex,
+                    taskIndex,
+                    TaskFlagSuppressCombat);
+            RuntimeTagFieldValue? squadFlagsField = squad.FirstOrDefault(field =>
+                field.Type == "long_flags" &&
+                string.Equals(
+                    CleanFieldName(field.Name),
+                    "flags",
+                    StringComparison.OrdinalIgnoreCase) &&
+                field.Size >= 4);
+            long taskFlagsAddress = objectives is null
+                ? 0
+                : ResolveTaskFlagsAddress(
+                    scenario,
+                    objectives,
+                    objectiveIndex,
+                    taskIndex);
 
             RuntimeTagFieldValue? spawnPoints = squad.FirstOrDefault(field =>
                 field.ChildBlockDefinition == "spawn_points_block" &&
@@ -1231,10 +1370,12 @@ public sealed class EnemySpawnerService : IDisposable
                 {
                     if (!isFriendlyTeam)
                         priority += 20;
-                    // Combat-zone variance: prefer idle scaffolds over encounter
-                    // squads so borrowing a fighting Covenant wave is last resort.
+                    // Allies need combat hooks for attack desire. Still avoid
+                    // borrowing a fighting Covenant wave when spawning friendlies.
                     if (hasCombatObjective)
-                        priority += isFriendlyTeam ? 3 : 12;
+                        priority += isFriendlyTeam ? -5 : 12;
+                    else if (isFriendlyTeam)
+                        priority += 4;
                     if (IsDedicatedName(squadName, DedicatedAllySquadName))
                         priority -= 50;
                     if (IsDedicatedName(squadName, DedicatedHostileSquadName))
@@ -1244,6 +1385,12 @@ public sealed class EnemySpawnerService : IDisposable
                 {
                     if (isFriendlyTeam)
                         priority += 20;
+                    // Hostiles need combat hooks for attack desire; idle
+                    // scaffolds spawn as standing props.
+                    if (hasCombatObjective)
+                        priority -= 8;
+                    else
+                        priority += 6;
                     if (IsDedicatedName(squadName, DedicatedHostileSquadName))
                         priority -= 50;
                     if (IsDedicatedName(squadName, DedicatedAllySquadName))
@@ -1253,8 +1400,13 @@ public sealed class EnemySpawnerService : IDisposable
                 {
                     priority += 1;
                 }
+                // Task "suppress combat" freezes shooting desire — never prefer it.
+                if (suppressesCombat)
+                    priority += 30;
+                // Native fireteam already handles follow. Preferring authored
+                // follow tasks often selects suppress-combat companion orders.
                 if (followsPlayer)
-                    priority -= 10;
+                    priority += preferFriendlyScaffold ? 8 : -10;
                 if (nearest is null ||
                     priority < nearestPriority ||
                     (priority == nearestPriority &&
@@ -1272,6 +1424,8 @@ public sealed class EnemySpawnerService : IDisposable
                         actorVariant.Address,
                         objectiveField is { Size: >= 2 } ? objectiveField.Address : 0,
                         taskField is { Size: >= 2 } ? taskField.Address : 0,
+                        taskFlagsAddress,
+                        squadFlagsField?.Address ?? 0,
                         distanceSquared);
                 }
             }
@@ -2105,12 +2259,6 @@ public sealed class EnemySpawnerService : IDisposable
         BinaryPrimitives.ReadSingleLittleEndian(
             _memory.ReadBytes(address, sizeof(float)));
 
-    private void RestorePatches(IEnumerable<MemoryPatch> patches)
-    {
-        foreach (MemoryPatch patch in patches.Reverse())
-            _memory.WriteVerified(patch.Address, patch.Original);
-    }
-
     private static int ShieldDonorScore(string path)
     {
         string value = path.Replace('\\', '/').ToLowerInvariant();
@@ -2450,6 +2598,8 @@ public sealed class EnemySpawnerService : IDisposable
         long VariantAddress,
         long ObjectiveAddress,
         long TaskAddress,
+        long TaskFlagsAddress,
+        long SquadFlagsAddress,
         double DistanceSquared);
 
     private sealed record SpawnPlan(

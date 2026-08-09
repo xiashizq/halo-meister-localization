@@ -30,7 +30,7 @@
                         x:Name="BridgeStatusText"
                         MaxWidth="360"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextTrimming="CharacterEllipsis" />
+                        TextWrapping="Wrap" />
                 </StackPanel>
                 <Button x:Name="RefreshButton" Click="OnRefresh" Content="{i18n:Loc Key='player_tools.refresh_position'}" />
             </StackPanel>
@@ -149,6 +149,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
+
                     </Grid>
                 </ScrollViewer>
             </PivotItem>
@@ -332,6 +333,64 @@
                                 <TextBlock
                                     Style="{StaticResource CompactSafetyTextStyle}"
                                     Text="{i18n:Loc Key='player_tools.shared_melee_effects_used_by_enemies_or_o_c949cd'}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </ScrollViewer>
+            </PivotItem>
+
+            <PivotItem Header="{i18n:Loc Key='player_tools.character_scale'}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Padding="0,12,0,8">
+                        <Border
+                            MaxWidth="760"
+                            HorizontalAlignment="Left"
+                            Style="{StaticResource LiveToolCardStyle}">
+                            <StackPanel Spacing="14">
+                                <StackPanel Spacing="4">
+                                    <TextBlock
+                                        FontSize="18"
+                                        FontWeight="SemiBold"
+                                        Text="{i18n:Loc Key='player_tools.character_scale'}" />
+                                    <TextBlock
+                                        Style="{StaticResource LivePageDescriptionStyle}"
+                                        Text="{i18n:Loc Key='player_tools.character_scale_desc'}"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Border Style="{StaticResource LiveToolInsetStyle}">
+                                    <TextBlock
+                                        Style="{StaticResource CompactSafetyTextStyle}"
+                                        Text="{i18n:Loc Key='player_tools.character_scale_warning'}"
+                                        TextWrapping="Wrap" />
+                                </Border>
+                                <StackPanel Orientation="Horizontal" Spacing="9">
+                                    <ComboBox
+                                        x:Name="PlayerScaleBox"
+                                        MinWidth="150"
+                                        Header="{i18n:Loc Key='player_tools.scale'}"
+                                        SelectedIndex="3">
+                                        <ComboBoxItem Content="0.25×" Tag="0.25" />
+                                        <ComboBoxItem Content="0.5×" Tag="0.5" />
+                                        <ComboBoxItem Content="0.75×" Tag="0.75" />
+                                        <ComboBoxItem Content="1×" Tag="1" />
+                                    </ComboBox>
+                                    <Button
+                                        x:Name="ApplyPlayerScaleButton"
+                                        VerticalAlignment="Bottom"
+                                        Click="OnApplyPlayerScale"
+                                        Content="{i18n:Loc Key='player_tools.apply_scale'}"
+                                        Style="{StaticResource AccentButtonStyle}" />
+                                    <Button
+                                        x:Name="RestorePlayerScaleButton"
+                                        VerticalAlignment="Bottom"
+                                        Click="OnRestorePlayerScale"
+                                        Content="{i18n:Loc Key='player_tools.restore_scale'}" />
+                                    <Button
+                                        x:Name="ApplyPrimaryWeaponScaleButton"
+                                        VerticalAlignment="Bottom"
+                                        Click="OnApplyPrimaryWeaponScale"
+                                        Content="{i18n:Loc Key='player_tools.apply_primary_weapon_scale'}" />
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </Grid>

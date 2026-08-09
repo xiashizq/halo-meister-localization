@@ -1,5 +1,7 @@
 using HaloMeister.App.Models;
 using HaloMeister.App.Localization;
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 
 namespace HaloMeister.App.Services;
 
@@ -9,146 +11,71 @@ public sealed record PlayerBipedChoice(
     RuntimeTagEntry BipedTag,
     bool IsOriginal)
 {
-    public string TagPath => BipedTag.Name;
-    public string Detail => $"{Category} · {TagPath}  [bipd]";
+    public string TagPath => BipedTag.Name.Replace('\\', '/');
+    public string Detail => $"{Category} · {TagPath}";
+}
+
+public sealed record PlayerBipedVariantChoice(
+    string Name,
+    byte[] StringIdBytes,
+    bool IsDefault)
+{
+    public uint StringId => StringIdBytes.Length == sizeof(uint)
+        ? BinaryPrimitives.ReadUInt32LittleEndian(StringIdBytes)
+        : 0;
 }
 
 public sealed record PlayerBipedSession(
-    RuntimeTagEntry PlayerBiped,
-    RuntimeTagEntry ActiveBiped,
     IReadOnlyList<PlayerBipedChoice> Choices);
+
+public sealed record BumpPossessionResult(
+    ScriptExecutionResult Spawn,
+    bool Transferred,
+    int? ActiveTagIndex);
 
 public sealed class PlayerBipedService : IDisposable
 {
-    private const uint ConfirmedPlayerDatum = 0xFBB2195C;
-
+    public const string CharacterOverlayStem = "ZZ_HM_BIPED_REDIRECT_P";
     private readonly RuntimeTagMemoryService _memory = RuntimeTagMemoryService.Current;
     private readonly RuntimeTagDefinitionService _definitions = new();
     private readonly ScriptingBridgeService _bridge = ScriptingBridgeService.Current;
-    private readonly List<PlayerRepresentationSnapshot> _representations = [];
+    private readonly PlayerToolsService _playerTools = new();
     private IReadOnlyList<RuntimeTagEntry> _tags = [];
-    private RuntimeTagEntry? _playerBiped;
-    private long _capturedPlayerNameAddress;
-    private int _activeBipedIndex = -1;
+    private readonly List<AppliedMemorySnapshot> _tagPatch = [];
+    private long _capturedGlobalsNameAddress;
     private int _warmedProcessId;
 
     public int ProcessId => _memory.ProcessId;
     public ScriptingBridgeStatus BridgeStatus => _bridge.GetStatus();
     public bool CanRestore =>
-        _representations.Count > 0 &&
-        _playerBiped is not null &&
-        _playerBiped.NameAddress == _capturedPlayerNameAddress &&
-        _memory.IsConnected;
+        _memory.IsConnected &&
+        _tagPatch.Count > 0 &&
+        _tags.Any(tag => tag.NameAddress == _capturedGlobalsNameAddress &&
+                         string.Equals(tag.Group, "matg", StringComparison.OrdinalIgnoreCase));
 
     public PlayerBipedSession Connect()
     {
         if (_definitions.SchemaCount == 0)
             _definitions.LoadDirectory(
                 RuntimeTagDefinitionLocator.ResolveCampaignEvolved());
-        if (!_definitions.HasSchema("bipd") ||
-            !_definitions.HasSchema("matg") ||
-            !_definitions.HasSchema("scnr"))
-            throw new InvalidDataException(
-                "The loaded definitions do not provide the [bipd], [matg], and [scnr] schemas.");
+        if (!_definitions.HasSchema("bipd"))
+            throw new InvalidDataException(L.Get("change_biped.error_definitions_missing"));
 
         if (!_memory.IsConnected)
-            throw new InvalidOperationException(
-                "Connect to the game from the header first.");
+            throw new InvalidOperationException(L.Get("change_biped.error_connect_game_first"));
         _tags = _memory.ReadTags();
-        _playerBiped = FindPlayerBiped();
-        _representations.Clear();
-        _capturedPlayerNameAddress = 0;
-        _activeBipedIndex = _playerBiped.Index;
         return BuildSession();
     }
 
     public PlayerBipedSession Refresh()
     {
         if (!_memory.IsConnected)
-            throw new InvalidOperationException("Connect to the running game first.");
+            throw new InvalidOperationException(L.Get("change_biped.error_connect_game_first"));
         _tags = _memory.ReadTags();
-        _playerBiped = FindPlayerBiped();
-        if (_representations.Count > 0 &&
-            _playerBiped.NameAddress != _capturedPlayerNameAddress)
-        {
-            _representations.Clear();
-            _capturedPlayerNameAddress = 0;
-            _activeBipedIndex = _playerBiped.Index;
-        }
         return BuildSession();
     }
 
-    public void Apply(PlayerBipedChoice choice)
-    {
-        RuntimeTagEntry player = _playerBiped
-            ?? throw new InvalidOperationException("The original player biped is not available.");
-        RuntimeTagEntry target = _tags.FirstOrDefault(tag =>
-                tag.Index == choice.BipedTag.Index && IsUsableBiped(tag))
-            ?? throw new InvalidOperationException(
-                "That biped tag is no longer loaded. Refresh the page and choose it again.");
-        if (_representations.Count > 0 &&
-            player.NameAddress != _capturedPlayerNameAddress)
-            throw new InvalidOperationException(
-                "The live tag table moved after globals were captured. Reconnect before applying another biped.");
-
-        CapturePlayerRepresentations(player);
-        byte[] targetReference = _memory.BuildTagReference(target);
-        byte[] targetVariant = ReadDefaultModelVariant(target);
-        var completedWrites = new List<MemorySnapshot>();
-        try
-        {
-            foreach (PlayerRepresentationSnapshot representation in _representations)
-            {
-                completedWrites.Add(new MemorySnapshot(
-                    representation.Unit.Address,
-                    _memory.ReadBytes(
-                        representation.Unit.Address,
-                        representation.Unit.OriginalBytes.Length)));
-                _memory.WriteVerified(representation.Unit.Address, targetReference);
-
-                completedWrites.Add(new MemorySnapshot(
-                    representation.Variant.Address,
-                    _memory.ReadBytes(
-                        representation.Variant.Address,
-                        representation.Variant.OriginalBytes.Length)));
-                _memory.WriteVerified(representation.Variant.Address, targetVariant);
-            }
-            _activeBipedIndex = target.Index;
-        }
-        catch
-        {
-            foreach (MemorySnapshot write in completedWrites.AsEnumerable().Reverse())
-            {
-                try { _memory.WriteVerified(write.Address, write.OriginalBytes); }
-                catch { }
-            }
-            throw;
-        }
-    }
-
-    public void Restore()
-    {
-        RuntimeTagEntry player = _playerBiped
-            ?? throw new InvalidOperationException("The original player biped is not available.");
-        if (_representations.Count == 0)
-            throw new InvalidOperationException("No original globals state has been captured.");
-        if (player.NameAddress != _capturedPlayerNameAddress)
-            throw new InvalidOperationException(
-                "The live tag table moved after globals were captured. Reconnect instead of restoring stale addresses.");
-
-        foreach (PlayerRepresentationSnapshot representation in _representations)
-        {
-            _memory.WriteVerified(
-                representation.Unit.Address,
-                representation.Unit.OriginalBytes);
-            _memory.WriteVerified(
-                representation.Variant.Address,
-                representation.Variant.OriginalBytes);
-        }
-        _activeBipedIndex = player.Index;
-    }
-
-    public async Task<ScriptExecutionResult> SpawnForBumpPossessionAsync(
+    public async Task<BumpPossessionResult> SpawnForBumpPossessionAsync(
         PlayerBipedChoice choice,
         CancellationToken cancellationToken = default)
     {
@@ -161,8 +88,7 @@ public sealed class PlayerBipedService : IDisposable
 
         RuntimeTagEntry target = _tags.FirstOrDefault(tag =>
                 tag.Index == choice.BipedTag.Index && IsUsableBiped(tag))
-            ?? throw new InvalidOperationException(
-                "That biped tag is no longer loaded. Refresh and select it again.");
+            ?? throw new InvalidOperationException(L.Get("change_biped.error_character_not_loaded"));
         uint datum = RuntimeTagMemoryService.BuildRuntimeDatum(target);
         ScriptExecutionResult result = await _bridge.ExecuteAsync(
             ScriptLanguage.BlamBipedPossess,
@@ -171,12 +97,41 @@ public sealed class PlayerBipedService : IDisposable
             cancellationToken);
         if (result.Outcome != ScriptOutcome.Confirmed)
             throw new InvalidOperationException(result.Message);
-        return result;
+
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        int? activeTagIndex = null;
+        try
+        {
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                activeTagIndex = await _playerTools.ReadActivePlayerTagIndexAsync(cancellationToken);
+                if (activeTagIndex == target.Index)
+                    return new BumpPossessionResult(result, Transferred: true, activeTagIndex);
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            }
+        }
+        catch
+        {
+            await DisableBumpPossessionAsync(CancellationToken.None);
+            throw;
+        }
+
+        await DisableBumpPossessionAsync(CancellationToken.None);
+        return new BumpPossessionResult(result, Transferred: false, activeTagIndex);
     }
 
     public async Task<ScriptExecutionResult> DisableBumpPossessionAsync(
         CancellationToken cancellationToken = default)
     {
+        ScriptingBridgeStatus status = _bridge.GetStatus();
+        if (!status.IsRuntimeReady)
+            throw new InvalidOperationException(
+                L.Get("bridge.error_not_responding"));
+        if (status.IsStale)
+            throw new InvalidOperationException(status.Summary);
+
         ScriptExecutionResult result = await _bridge.ExecuteAsync(
             ScriptLanguage.BlamBumpPossessionOff,
             "off",
@@ -185,6 +140,374 @@ public sealed class PlayerBipedService : IDisposable
         if (result.Outcome != ScriptOutcome.Confirmed)
             throw new InvalidOperationException(result.Message);
         return result;
+    }
+
+    /// <summary>
+    /// Patches only globals/globals.globals. The change takes effect when the
+    /// player representation is created again; it never writes scenario data.
+    /// </summary>
+    public TagBipedPatchResult ApplyTagRedirect(PlayerBipedChoice choice)
+    {
+        EnsureTagPatchReady();
+        if (_tagPatch.Count > 0)
+            throw new InvalidOperationException(L.Get("change_biped.error_redirect_already_active"));
+
+        _tags = _memory.ReadTags();
+        RuntimeTagEntry target = _tags.FirstOrDefault(tag =>
+                tag.Index == choice.BipedTag.Index && IsUsableBiped(tag))
+            ?? throw new InvalidOperationException(L.Get("change_biped.error_character_not_loaded"));
+        RuntimeTagEntry globals = FindGlobalsMatg();
+        PlayerRepresentationLocation representation = FindPlayerRepresentations(globals)
+            .Select(location => (Location: location, Score: PlayerNameScore(location.Biped.Name) - location.ElementIndex))
+            .OrderByDescending(item => item.Score)
+            .ThenBy(item => item.Location.ElementIndex)
+            .Select(item => item.Location)
+            .FirstOrDefault()
+            ?? throw new InvalidDataException(L.Get("change_biped.error_player_data_missing"));
+        RuntimeTagFieldValue customizationGlobals = FindCustomizationGlobals(globals);
+
+        byte[] unit = _memory.BuildTagReference(target);
+        byte[] variant = ReadDefaultModelVariant(target);
+        byte[] clearedCustomization = BuildNullTagReference();
+        var writes = new[]
+        {
+            CreatePatch(representation.Unit, unit),
+            CreatePatch(representation.Variant, variant),
+            CreatePatch(customizationGlobals, clearedCustomization),
+        };
+        _memory.ApplyTransaction(writes.Select(write =>
+            new RuntimeMemoryWrite(write.Address, write.OriginalBytes, write.AppliedBytes)));
+        _tagPatch.AddRange(writes);
+        _capturedGlobalsNameAddress = globals.NameAddress;
+
+        uint variantId = BinaryPrimitives.ReadUInt32LittleEndian(variant);
+        string variantName = _memory.TryGetStringIdName(variantId, out string? name)
+            ? name!
+            : $"0x{variantId:X8}";
+        return new TagBipedPatchResult(target.Name, variantName);
+    }
+
+    public void RestoreTagRedirect()
+    {
+        if (!CanRestore)
+            throw new InvalidOperationException(L.Get("change_biped.error_nothing_to_restore"));
+
+        _memory.ApplyTransaction(_tagPatch.Select(write =>
+            new RuntimeMemoryWrite(write.Address, write.AppliedBytes, write.OriginalBytes)));
+        _tagPatch.Clear();
+        _capturedGlobalsNameAddress = 0;
+    }
+
+    public async Task<ScriptExecutionResult> RespawnFromTagRedirectAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ScriptingBridgeStatus status = _bridge.GetStatus();
+        if (!status.IsRuntimeReady)
+            throw new InvalidOperationException(L.Get("bridge.error_not_responding"));
+        if (status.IsStale)
+            throw new InvalidOperationException(status.Summary);
+
+        ScriptExecutionResult result = await _bridge.ExecuteAsync(
+            ScriptLanguage.HaloScript,
+            "unit_kill (player_get 0)",
+            TimeSpan.FromSeconds(15),
+            cancellationToken);
+        if (result.Outcome == ScriptOutcome.Failed)
+            throw new InvalidOperationException(result.Message);
+        return result;
+    }
+
+    public IReadOnlyList<PlayerBipedVariantChoice> ReadVariants(PlayerBipedChoice choice)
+    {
+        EnsureTagPatchReady();
+        if (_tags.Count == 0 ||
+            !_tags.Any(tag => tag.Index == choice.BipedTag.Index && IsUsableBiped(tag)))
+            _tags = _memory.ReadTags();
+        RuntimeTagEntry target = _tags.FirstOrDefault(tag =>
+                tag.Index == choice.BipedTag.Index && IsUsableBiped(tag))
+            ?? throw new InvalidOperationException(L.Get("change_biped.error_character_not_loaded"));
+
+        byte[] defaultBytes = ReadDefaultModelVariant(target);
+        uint defaultId = BinaryPrimitives.ReadUInt32LittleEndian(defaultBytes);
+        string defaultName = FormatVariantName(defaultId, L.Get("change_biped.default_variant"));
+
+        var variants = new List<PlayerBipedVariantChoice>();
+        RuntimeTagEntry? model = FindBipedModel(target);
+        if (model is not null)
+        {
+            foreach (PlayerBipedVariantChoice variant in ReadModelVariants(model))
+            {
+                bool isDefault = variant.StringId == defaultId;
+                variants.Add(variant with
+                {
+                    Name = isDefault
+                        ? $"{variant.Name} ({L.Get("change_biped.default_variant")})"
+                        : variant.Name,
+                    IsDefault = isDefault,
+                });
+            }
+        }
+
+        if (variants.Count == 0)
+        {
+            variants.Add(new PlayerBipedVariantChoice(
+                defaultName,
+                defaultBytes,
+                IsDefault: true));
+        }
+        else if (!variants.Any(variant => variant.IsDefault))
+        {
+            variants.Insert(0, new PlayerBipedVariantChoice(
+                defaultName,
+                defaultBytes,
+                IsDefault: true));
+        }
+
+        return variants
+            .OrderByDescending(variant => variant.IsDefault)
+            .ThenBy(variant => variant.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Creates a persistent cooked-tag patch for the selected biped. The
+    /// result is intentionally semantic: no runtime datum or arena address is
+    /// carried into the exported IoStore overlay.
+    /// </summary>
+    public RuntimeTagModDocument BuildTagRedirectMod(
+        PlayerBipedChoice choice,
+        PlayerBipedVariantChoice? variantChoice = null)
+    {
+        EnsureTagPatchReady();
+        _tags = _memory.ReadTags();
+        RuntimeTagEntry target = _tags.FirstOrDefault(tag =>
+                tag.Index == choice.BipedTag.Index && IsUsableBiped(tag))
+            ?? throw new InvalidOperationException(L.Get("change_biped.error_character_not_loaded"));
+        RuntimeTagEntry globals = FindGlobalsMatg();
+        (PlayerRepresentationLocation Location, RuntimeTagFieldValue Block) representation =
+            FindPlayerRepresentationPatchTarget(globals);
+        RuntimeTagFieldValue customization = FindCustomizationGlobals(globals);
+
+        uint variantId = variantChoice?.StringId
+            ?? BinaryPrimitives.ReadUInt32LittleEndian(ReadDefaultModelVariant(target));
+        if (!_memory.TryGetStringIdName(variantId, out string? variantName) ||
+            string.IsNullOrWhiteSpace(variantName) ||
+            string.Equals(variantName, "NONE", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(L.Get("change_biped.error_variant_unavailable"));
+
+        List<RuntimeTagModBlockStep> blocks =
+        [
+            new RuntimeTagModBlockStep
+            {
+                Offset = representation.Block.Offset,
+                Definition = representation.Block.ChildBlockDefinition!,
+                Element = representation.Location.ElementIndex,
+                ElementSize = representation.Block.ChildElementSize,
+            },
+        ];
+        return new RuntimeTagModDocument
+        {
+            Name = $"Character redirect: {target.Name} / {variantName}",
+            Tags =
+            [
+                new RuntimeTagModTag
+                {
+                    Group = globals.Group,
+                    Name = globals.Name,
+                    Patches =
+                    [
+                        new RuntimeTagModPatch
+                        {
+                            Field = representation.Location.Unit.Name,
+                            Type = representation.Location.Unit.Type,
+                            Offset = representation.Location.Unit.Offset,
+                            Size = representation.Location.Unit.Size,
+                            Blocks = blocks,
+                            ReferenceGroup = target.Group,
+                            ReferenceName = target.Name,
+                        },
+                        new RuntimeTagModPatch
+                        {
+                            Field = representation.Location.Variant.Name,
+                            Type = representation.Location.Variant.Type,
+                            Offset = representation.Location.Variant.Offset,
+                            Size = representation.Location.Variant.Size,
+                            Blocks = blocks,
+                            StringIdName = variantName,
+                        },
+                        new RuntimeTagModPatch
+                        {
+                            Field = customization.Name,
+                            Type = customization.Type,
+                            Offset = customization.Offset,
+                            Size = customization.Size,
+                            ClearReference = true,
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    public async Task<NativeTagModExportResult> ExportTagRedirectOverlayAsync(
+        PlayerBipedChoice choice,
+        PlayerBipedVariantChoice? variantChoice = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        RuntimeTagModDocument mod = BuildTagRedirectMod(choice, variantChoice);
+        string outputDirectory = GetCharacterOverlayDirectory();
+        Directory.CreateDirectory(outputDirectory);
+        string output = Path.Combine(outputDirectory, CharacterOverlayStem + ".utoc");
+        var exporter = new NativeTagModExportService();
+        return await exporter.ExportAsync(mod, output);
+    }
+
+    public NativeTagModInstallResult InstallTagRedirectOverlay(string utocPath)
+    {
+        string stem = Path.GetFileNameWithoutExtension(utocPath);
+        return new NativeTagModExportService().ReplaceManagedOverlay(utocPath, stem);
+    }
+
+    public IReadOnlyList<string> RemoveTagRedirectOverlay(string stem)
+        => new NativeTagModExportService().RemoveManagedOverlay(stem);
+
+    public bool IsTagRedirectOverlayInstalled()
+        => new NativeTagModExportService().IsManagedOverlayInstalled(CharacterOverlayStem);
+
+    public IReadOnlyList<string> DeleteCharacterOverlayPackage(string stem)
+    {
+        string directory = GetCharacterOverlayDirectory();
+        var removed = new List<string>();
+        foreach (string extension in new[] { ".utoc", ".ucas", ".pak", ".hmtagmod" })
+        {
+            string path = Path.Combine(directory, stem + extension);
+            if (!File.Exists(path)) continue;
+            File.Delete(path);
+            removed.Add(path);
+        }
+        if (removed.Count == 0)
+            throw new FileNotFoundException(L.Get("change_biped.character_overlay_not_found"));
+        return removed;
+    }
+
+    public IReadOnlyList<CharacterOverlayPackage> GetCharacterOverlayPackages()
+    {
+        string localDir = GetCharacterOverlayDirectory();
+        var exporter = new NativeTagModExportService();
+        string? paks = exporter.TryResolvePaksDirectory();
+        var stems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (Directory.Exists(localDir))
+        {
+            foreach (string utoc in Directory.EnumerateFiles(localDir, "*_P.utoc"))
+                stems.Add(Path.GetFileNameWithoutExtension(utoc));
+        }
+
+        if (paks is not null)
+        {
+            if (NativeTagModExportService.HasCompleteTriplet(paks, CharacterOverlayStem))
+                stems.Add(CharacterOverlayStem);
+            foreach (string utoc in Directory.EnumerateFiles(paks, "ZZ_HM_BIPED*_P.utoc"))
+                stems.Add(Path.GetFileNameWithoutExtension(utoc));
+        }
+
+        return stems
+            .Select(stem =>
+            {
+                string? sourceUtoc = Path.Combine(localDir, stem + ".utoc");
+                bool existsLocally = Directory.Exists(localDir) &&
+                    NativeTagModExportService.HasCompleteTriplet(localDir, stem);
+                if (!existsLocally) sourceUtoc = null;
+
+                bool isInstalled = paks is not null &&
+                    NativeTagModExportService.HasCompleteTriplet(paks, stem);
+                // Allow uninstall for complete or partial installs that only
+                // exist under Meteorite/Content/Paks (no local package copy).
+                bool hasInstalledFiles = paks is not null &&
+                    NativeTagModExportService.HasAnyOverlayFiles(paks, stem);
+                DateTime modified = DateTime.MinValue;
+                if (existsLocally && sourceUtoc is not null)
+                    modified = File.GetLastWriteTime(sourceUtoc);
+                else if (hasInstalledFiles && paks is not null)
+                {
+                    string installedUtoc = Path.Combine(paks, stem + ".utoc");
+                    if (File.Exists(installedUtoc))
+                        modified = File.GetLastWriteTime(installedUtoc);
+                }
+
+                bool contentsMatch = false;
+                if (existsLocally && isInstalled && paks is not null)
+                {
+                    string? localFingerprint = TryFingerprintOverlayTriplet(localDir, stem);
+                    string? installedFingerprint = TryFingerprintOverlayTriplet(paks, stem);
+                    contentsMatch =
+                        localFingerprint is not null &&
+                        installedFingerprint is not null &&
+                        string.Equals(
+                            localFingerprint,
+                            installedFingerprint,
+                            StringComparison.Ordinal);
+                }
+
+                // Install only when a local package exists and either nothing is
+                // installed for this stem, or the installed files differ.
+                bool canInstall =
+                    existsLocally &&
+                    !string.IsNullOrWhiteSpace(sourceUtoc) &&
+                    (!isInstalled || !contentsMatch);
+
+                bool installedOnly = !existsLocally && hasInstalledFiles;
+                string status = (existsLocally, isInstalled, contentsMatch) switch
+                {
+                    (true, true, true) => L.Get("change_biped.overlay_status_local_installed"),
+                    (true, true, false) => L.Get("change_biped.overlay_status_local_outdated_install"),
+                    (true, false, _) => L.Get("change_biped.overlay_status_local_only"),
+                    (false, true, _) => L.Get("change_biped.overlay_status_installed_only"),
+                    _ when installedOnly => L.Get("change_biped.overlay_status_installed_only"),
+                    _ => L.Get("change_biped.overlay_status_unknown"),
+                };
+
+                return new CharacterOverlayPackage(
+                    stem,
+                    sourceUtoc,
+                    modified,
+                    existsLocally,
+                    isInstalled || hasInstalledFiles,
+                    CanInstall: canInstall,
+                    // Keep enabled for installed-only packs; click path reports
+                    // file-in-use if the game still holds the overlay open.
+                    CanUninstall: hasInstalledFiles,
+                    CanDelete: existsLocally,
+                    status);
+            })
+            .OrderByDescending(package => package.Modified)
+            .ThenBy(package => package.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public static string GetCharacterOverlayDirectory() =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HaloMeister", "CharacterOverlays");
+
+    private static string? TryFingerprintOverlayTriplet(string directory, string stem)
+    {
+        try
+        {
+            var parts = new List<string>(3);
+            foreach (string extension in new[] { ".utoc", ".ucas", ".pak" })
+            {
+                string path = Path.Combine(directory, stem + extension);
+                byte[] hash = SHA256.HashData(File.ReadAllBytes(path));
+                parts.Add($"{new FileInfo(path).Length}:{Convert.ToHexString(hash)}");
+            }
+            return string.Join('|', parts);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public async Task WarmUpAsync(CancellationToken cancellationToken = default)
@@ -221,73 +544,97 @@ public sealed class PlayerBipedService : IDisposable
 
     private PlayerBipedSession BuildSession()
     {
-        RuntimeTagEntry player = _playerBiped ?? FindPlayerBiped();
-        RuntimeTagEntry active = _tags.FirstOrDefault(tag => tag.Index == _activeBipedIndex)
-            ?? player;
+        // Runtime can expose the same biped twice with mixed separators
+        // (objects/characters/... vs objects\characters\...). Keep one entry.
         PlayerBipedChoice[] choices = _tags
             .Where(IsUsableBiped)
+            .GroupBy(tag => Normalize(tag.Name), StringComparer.Ordinal)
+            .Select(group => PreferBipedTag(group))
             .Select(tag => new PlayerBipedChoice(
                 DisplayName(tag),
                 Categorize(tag.Name),
                 tag,
-                tag.Index == player.Index))
-            .OrderBy(choice => choice.BipedTag.Index == active.Index ? 0 : 1)
-            .ThenBy(choice => CategoryOrder(choice.Category))
+                IsOriginal: false))
+            .OrderBy(choice => CategoryOrder(choice.Category))
             .ThenBy(choice => choice.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(choice => choice.TagPath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (choices.Length == 0)
-            throw new InvalidDataException("No usable [bipd] tags are loaded in this mission.");
-        return new PlayerBipedSession(player, active, choices);
+            throw new InvalidDataException(L.Get("change_biped.error_no_characters"));
+        return new PlayerBipedSession(choices);
     }
 
-    private void CapturePlayerRepresentations(RuntimeTagEntry player)
+    private static RuntimeTagEntry PreferBipedTag(IEnumerable<RuntimeTagEntry> group) =>
+        group
+            .OrderByDescending(tag => tag.Name.Contains('/') ? 1 : 0)
+            .ThenByDescending(tag => tag.RootCount)
+            .ThenByDescending(tag => tag.DataAddress > 0 ? 1 : 0)
+            .ThenBy(tag => tag.Index)
+            .First();
+
+    private void EnsureTagPatchReady()
     {
-        if (_representations.Count > 0) return;
-        PlayerRepresentationLocation[] available = FindPlayerRepresentations().ToArray();
-        PlayerRepresentationLocation[] selected = available
-            .Where(location =>
-                location.Biped.Index == player.Index ||
-                PlayerNameScore(location.Biped.Name) >= 60 ||
-                (string.Equals(
-                     location.OwnerGroup,
-                     "scnr",
-                     StringComparison.OrdinalIgnoreCase) &&
-                 location.ElementIndex == 0))
+        if (!_memory.IsConnected)
+            throw new InvalidOperationException(L.Get("change_biped.error_connect_game_first"));
+        if (_definitions.SchemaCount == 0)
+            _definitions.LoadDirectory(RuntimeTagDefinitionLocator.ResolveCampaignEvolved());
+        if (!_definitions.HasSchema("matg") || !_definitions.HasSchema("bipd"))
+            throw new InvalidDataException(L.Get("change_biped.error_definitions_missing"));
+    }
+
+    private RuntimeTagFieldValue FindCustomizationGlobals(RuntimeTagEntry globals)
+    {
+        IReadOnlyList<RuntimeTagFieldValue> root = _definitions.ReadRootFields(
+            globals.Group,
+            globals.DataAddress,
+            _memory.ReadBytes,
+            ResolveOrNull);
+        RuntimeTagFieldValue field = root.FirstOrDefault(item =>
+                item.IsTagReference &&
+                string.Equals(
+                    CleanFieldName(item.Name),
+                    "player model customization globals",
+                    StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidDataException(L.Get("change_biped.error_player_data_missing"));
+        if (field.Size != 16)
+            throw new InvalidDataException(L.Get("change_biped.error_player_data_invalid"));
+        return field;
+    }
+
+    private RuntimeTagEntry FindGlobalsMatg()
+    {
+        RuntimeTagEntry[] candidates = _tags
+            .Where(tag =>
+                string.Equals(tag.Group, "matg", StringComparison.OrdinalIgnoreCase) &&
+                tag.DataAddress > 0)
             .ToArray();
-        if (selected.Length == 0)
+        RuntimeTagEntry? exact = candidates.FirstOrDefault(tag =>
         {
-            PlayerRepresentationLocation? fallback = available
-                .OrderBy(location =>
-                    string.Equals(location.OwnerGroup, "matg", StringComparison.OrdinalIgnoreCase)
-                        ? 0
-                        : 1)
-                .ThenBy(location => location.ElementIndex)
-                .FirstOrDefault();
-            if (fallback is not null) selected = [fallback];
-        }
+            string path = Normalize(tag.Name);
+            return path is "globals/globals" or "globals/globals.globals" ||
+                   path.EndsWith("/globals/globals", StringComparison.Ordinal) ||
+                   path.EndsWith("/globals/globals.globals", StringComparison.Ordinal);
+        });
+        if (exact is not null) return exact;
 
-        _representations.AddRange(selected.Select(location =>
-            new PlayerRepresentationSnapshot(
-                location.OwnerGroup,
-                new MemorySnapshot(
-                    location.Unit.Address,
-                    _memory.ReadBytes(location.Unit.Address, location.Unit.Size)),
-                new MemorySnapshot(
-                    location.Variant.Address,
-                    _memory.ReadBytes(location.Variant.Address, location.Variant.Size)))));
-        if (_representations.Count == 0)
-            throw new InvalidDataException(
-                "No usable globals or scenario player representation was found.");
-        _capturedPlayerNameAddress = player.NameAddress;
+        return candidates
+                .OrderByDescending(tag =>
+                    Normalize(tag.Name).Contains("globals", StringComparison.Ordinal) ? 1 : 0)
+                .FirstOrDefault()
+            ?? throw new InvalidDataException(L.Get("change_biped.error_player_data_missing"));
     }
 
-    private IEnumerable<PlayerRepresentationLocation> FindPlayerRepresentations()
+    private IEnumerable<PlayerRepresentationLocation> FindPlayerRepresentations(
+        RuntimeTagEntry? ownerFilter = null)
     {
-        foreach (RuntimeTagEntry owner in _tags.Where(tag =>
-                     tag.DataAddress > 0 &&
-                     (string.Equals(tag.Group, "matg", StringComparison.OrdinalIgnoreCase) ||
-                      string.Equals(tag.Group, "scnr", StringComparison.OrdinalIgnoreCase))))
+        IEnumerable<RuntimeTagEntry> owners = ownerFilter is not null
+            ? [ownerFilter]
+            : _tags.Where(tag =>
+                tag.DataAddress > 0 &&
+                (string.Equals(tag.Group, "matg", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(tag.Group, "scnr", StringComparison.OrdinalIgnoreCase)));
+
+        foreach (RuntimeTagEntry owner in owners)
         {
             IReadOnlyList<RuntimeTagFieldValue> root;
             try
@@ -359,6 +706,35 @@ public sealed class PlayerBipedService : IDisposable
         }
     }
 
+    private (PlayerRepresentationLocation Location, RuntimeTagFieldValue Block)
+        FindPlayerRepresentationPatchTarget(RuntimeTagEntry globals)
+    {
+        IReadOnlyList<RuntimeTagFieldValue> root = _definitions.ReadRootFields(
+            globals.Group, globals.DataAddress, _memory.ReadBytes, ResolveOrNull);
+        RuntimeTagFieldValue block = root.FirstOrDefault(field =>
+                field.CanOpenBlock &&
+                string.Equals(field.ChildBlockDefinition, "player_representation_block",
+                    StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidDataException(L.Get("change_biped.error_player_data_missing"));
+        PlayerRepresentationLocation location = FindPlayerRepresentations(globals)
+            .Select(item => (Location: item, Score: PlayerNameScore(item.Biped.Name) - item.ElementIndex))
+            .OrderByDescending(item => item.Score)
+            .ThenBy(item => item.Location.ElementIndex)
+            .Select(item => item.Location)
+            .FirstOrDefault()
+            ?? throw new InvalidDataException(L.Get("change_biped.error_player_data_missing"));
+        return (location, block);
+    }
+
+    private static byte[] BuildNullTagReference()
+    {
+        // Guerilla-style cleared tag_reference: invalid group + invalid datum.
+        byte[] reference = new byte[16];
+        BinaryPrimitives.WriteUInt32LittleEndian(reference.AsSpan(0), uint.MaxValue);
+        BinaryPrimitives.WriteUInt32LittleEndian(reference.AsSpan(12), uint.MaxValue);
+        return reference;
+    }
+
     private byte[] ReadDefaultModelVariant(RuntimeTagEntry biped)
     {
         IReadOnlyList<RuntimeTagFieldValue> fields = _definitions.ReadRootFields(
@@ -372,56 +748,95 @@ public sealed class PlayerBipedService : IDisposable
                     CleanFieldName(field.Name),
                     "default model variant",
                     StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidDataException(
-                $"The [bipd] schema did not resolve the default model variant for {biped.Name}.");
+            ?? throw new InvalidDataException(L.Get("change_biped.error_variant_unavailable"));
         if (variant.Size != 4)
-            throw new InvalidDataException(
-                $"The default model variant for {biped.Name} has unexpected size {variant.Size}.");
+            throw new InvalidDataException(L.Get("change_biped.error_variant_unavailable"));
         return _memory.ReadBytes(variant.Address, variant.Size);
     }
 
-    private RuntimeTagEntry FindPlayerBiped()
+    private RuntimeTagEntry? FindBipedModel(RuntimeTagEntry biped)
     {
-        RuntimeTagEntry[] bipeds = _tags.Where(IsUsableBiped).ToArray();
-        PlayerRepresentationLocation[] representations =
-            FindPlayerRepresentations().ToArray();
+        IReadOnlyList<RuntimeTagFieldValue> root = _definitions.ReadRootFields(
+            biped.Group,
+            biped.DataAddress,
+            _memory.ReadBytes,
+            ResolveOrNull);
+        RuntimeTagFieldValue? modelReference = root.FirstOrDefault(field =>
+            field.IsTagReference &&
+            string.Equals(
+                CleanFieldName(field.Name),
+                "model",
+                StringComparison.OrdinalIgnoreCase));
+        if (modelReference is null)
+            return null;
+        return _tags.FirstOrDefault(tag =>
+            tag.Index == modelReference.ReferencedTagIndex &&
+            string.Equals(tag.Group, "hlmt", StringComparison.OrdinalIgnoreCase) &&
+            tag.DataAddress > 0 &&
+            tag.RootCount > 0);
+    }
 
-        RuntimeTagEntry? exact = representations
-            .Select(location => location.Biped)
-            .FirstOrDefault(tag =>
-                RuntimeTagMemoryService.BuildRuntimeDatum(tag) == ConfirmedPlayerDatum);
-        if (exact is not null) return exact;
+    private IEnumerable<PlayerBipedVariantChoice> ReadModelVariants(RuntimeTagEntry model)
+    {
+        IReadOnlyList<RuntimeTagFieldValue> modelRoot = _definitions.ReadRootFields(
+            model.Group,
+            model.DataAddress,
+            _memory.ReadBytes,
+            ResolveOrNull);
+        RuntimeTagFieldValue? variants = modelRoot.FirstOrDefault(field =>
+            field.CanOpenBlock &&
+            string.Equals(
+                field.ChildBlockDefinition,
+                "model_variant_block",
+                StringComparison.OrdinalIgnoreCase));
+        if (variants is null || variants.ChildCount <= 0)
+            yield break;
 
-        RuntimeTagEntry? representedChief = representations
-            .Select(location => (location.Biped, Score: PlayerNameScore(location.Biped.Name)))
-            .Where(item => item.Score > 0)
-            .OrderByDescending(item => item.Score)
-            .ThenBy(item => item.Biped.Name.Length)
-            .Select(item => item.Biped)
-            .FirstOrDefault();
-        if (representedChief is not null) return representedChief;
+        for (int index = 0; index < variants.ChildCount; index++)
+        {
+            IReadOnlyList<RuntimeTagFieldValue> fields = _definitions.ReadBlockFields(
+                model.Group,
+                variants.ChildBlockDefinition!,
+                variants.ChildAddress,
+                index,
+                _memory.ReadBytes,
+                ResolveOrNull);
+            RuntimeTagFieldValue? name = fields.FirstOrDefault(field =>
+                field.Type == "string_id" &&
+                field.Size == sizeof(uint) &&
+                string.Equals(
+                    CleanFieldName(field.Name),
+                    "name",
+                    StringComparison.OrdinalIgnoreCase));
+            if (name is null)
+                continue;
 
-        RuntimeTagEntry? firstGlobal = representations
-            .Where(location =>
-                string.Equals(location.OwnerGroup, "matg", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(location => location.ElementIndex)
-            .Select(location => location.Biped)
-            .FirstOrDefault();
-        if (firstGlobal is not null) return firstGlobal;
+            byte[] bytes = _memory.ReadBytes(name.Address, name.Size);
+            uint stringId = BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+            yield return new PlayerBipedVariantChoice(
+                FormatVariantName(stringId, L.Format("change_biped.variant_numbered", index + 1)),
+                bytes,
+                IsDefault: false);
+        }
+    }
 
-        exact = bipeds.FirstOrDefault(tag =>
-            RuntimeTagMemoryService.BuildRuntimeDatum(tag) == ConfirmedPlayerDatum);
-        if (exact is not null) return exact;
+    private string FormatVariantName(uint stringId, string fallback)
+    {
+        if (_memory.TryGetStringIdName(stringId, out string? name) &&
+            !string.IsNullOrWhiteSpace(name) &&
+            !string.Equals(name, "NONE", StringComparison.OrdinalIgnoreCase))
+            return name!;
+        return fallback;
+    }
 
-        RuntimeTagEntry? named = bipeds
-            .Select(tag => (Tag: tag, Score: PlayerNameScore(tag.Name)))
-            .Where(item => item.Score > 0)
-            .OrderByDescending(item => item.Score)
-            .ThenBy(item => item.Tag.Name.Length)
-            .Select(item => item.Tag)
-            .FirstOrDefault();
-        return named ?? throw new InvalidDataException(
-            "The Master Chief player [bipd] is not loaded. Enter an offline campaign mission and reconnect.");
+    private AppliedMemorySnapshot CreatePatch(RuntimeTagFieldValue field, byte[] value)
+    {
+        if (field.Size != value.Length || !_memory.IsWritable(field.Address, field.Size))
+            throw new UnauthorizedAccessException(L.Get("change_biped.error_memory_not_writable"));
+        return new AppliedMemorySnapshot(
+            field.Address,
+            _memory.ReadBytes(field.Address, field.Size),
+            value);
     }
 
     private static bool IsUsableBiped(RuntimeTagEntry tag) =>
@@ -512,12 +927,10 @@ public sealed class PlayerBipedService : IDisposable
                 .Select(word => char.ToUpperInvariant(word[0]) + word[1..]));
     }
 
-    private sealed record MemorySnapshot(long Address, byte[] OriginalBytes);
-
-    private sealed record PlayerRepresentationSnapshot(
-        string OwnerGroup,
-        MemorySnapshot Unit,
-        MemorySnapshot Variant);
+    private sealed record AppliedMemorySnapshot(
+        long Address,
+        byte[] OriginalBytes,
+        byte[] AppliedBytes);
 
     private sealed record PlayerRepresentationLocation(
         string OwnerGroup,
@@ -526,3 +939,15 @@ public sealed class PlayerBipedService : IDisposable
         RuntimeTagFieldValue Unit,
         RuntimeTagFieldValue Variant);
 }
+
+public sealed record TagBipedPatchResult(string TagPath, string VariantName);
+public sealed record CharacterOverlayPackage(
+    string Name,
+    string? SourceUtocPath,
+    DateTime Modified,
+    bool ExistsLocally,
+    bool IsInstalled,
+    bool CanInstall,
+    bool CanUninstall,
+    bool CanDelete,
+    string Status);

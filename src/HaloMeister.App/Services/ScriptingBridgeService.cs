@@ -37,6 +37,7 @@ public enum ScriptLanguage
     PlayerPosition,
     PlayerUnitTagRead,
     PlayerInput,
+    PlayerWeaponNormalize,
     BlamMachinima,
     MachinimaState,
     MachinimaNodes,
@@ -306,6 +307,7 @@ public sealed class ScriptingBridgeService
                 ScriptLanguage.PlayerPosition => "player_position",
                 ScriptLanguage.PlayerUnitTagRead => "player_unit_tag_read",
                 ScriptLanguage.PlayerInput => "player_input",
+                ScriptLanguage.PlayerWeaponNormalize => "player_weapon_normalize",
                 ScriptLanguage.BlamMachinima => "blam_machinima",
                 ScriptLanguage.MachinimaState => "machinima_state",
                 ScriptLanguage.MachinimaNodes => "machinima_nodes",
@@ -903,6 +905,7 @@ public sealed class ScriptingBridgeService
                     ScriptLanguage.PlayerPosition or
                     ScriptLanguage.PlayerUnitTagRead or
                     ScriptLanguage.PlayerInput or
+                    ScriptLanguage.PlayerWeaponNormalize or
                     ScriptLanguage.BlamMachinima or
                     ScriptLanguage.MachinimaState or
                     ScriptLanguage.MachinimaNodes or
@@ -1402,6 +1405,7 @@ public sealed class ScriptingBridgeService
             ScriptLanguage.PlayerPosition => "player position",
             ScriptLanguage.PlayerUnitTagRead => "read controlled player unit tag",
             ScriptLanguage.PlayerInput => "suppress or restore player input",
+            ScriptLanguage.PlayerWeaponNormalize => "normalize equipped player weapons",
             ScriptLanguage.BlamMachinima => "native Blam machinima camera",
             ScriptLanguage.MachinimaState => "read Advanced Machinima state",
             ScriptLanguage.MachinimaNodes => "read live camera-location nodes",

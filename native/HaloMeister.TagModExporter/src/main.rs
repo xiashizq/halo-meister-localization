@@ -3,7 +3,7 @@ mod expand_palettes;
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
-use blam_tags::fields::{TagFieldData, TagFieldType, TagReferenceData};
+use blam_tags::fields::{StringIdData, TagFieldData, TagFieldType, TagReferenceData};
 use blam_tags::iostore::IoStoreArchive;
 use blam_tags::math;
 use blam_tags::{TagFile, TagStructMut};
@@ -40,6 +40,9 @@ struct Patch {
     data: Option<String>,
     reference_group: Option<String>,
     reference_name: Option<String>,
+    string_id_name: Option<String>,
+    #[serde(default)]
+    clear_reference: bool,
 }
 
 #[derive(Deserialize)]
@@ -88,12 +91,12 @@ fn run() -> Result<()> {
     if list_ai_characters {
         let curated = expand_palettes::list_ai_character_catalog(&archives)?;
         let all = expand_palettes::list_all_ai_character_paths(&archives)?;
-        println!("# Character-palette fill catalog (representatives first, then padding to 64)");
+        println!("# Curated AI character catalog (diagnostic only)");
         for path in &curated {
             println!("{path}");
         }
         println!(
-            "Fill catalog: {} (hard-rejected excluded) / {} AI character(s) in packs",
+            "Curated AI catalog: {} (hard-rejected excluded) / {} AI character(s) in packs",
             curated.len(),
             all.len()
         );
@@ -106,12 +109,14 @@ fn run() -> Result<()> {
             println!("{line}");
         }
         println!(
-            "Summary: {} / {} scenario(s) changed from catalogs of {} vehicle(s)/{} weapon(s)/{} AI character(s); +{} vehicle, +{} weapon, +{} character palette entries ({} skipped by 64-cap); +{} hm_ally ({} hostile-fallback), +{} hm_hostile",
+            "Summary: {} / {} scenario(s) changed from catalogs of {} biped(s)/{} vehicle(s)/{} weapon(s)/{} safe AI character(s); +{} biped, +{} vehicle, +{} weapon, +{} character palette entries ({} skipped by 64-cap); +{} hm_ally ({} hostile-fallback), +{} hm_hostile",
             report.scenarios_changed,
             report.scenarios_seen,
+            report.biped_catalog,
             report.vehicle_catalog,
             report.weapon_catalog,
             report.character_catalog,
+            report.biped_added_total,
             report.vehicle_added_total,
             report.weapon_added_total,
             report.character_added_total,
@@ -400,6 +405,14 @@ fn find_field_ordinal(
 }
 
 fn patch_value(patch: &Patch, actual: TagFieldType) -> Result<TagFieldData> {
+    if patch.clear_reference {
+        if actual != TagFieldType::TagReference {
+            bail!("a cleared reference targeted a non-reference field");
+        }
+        return Ok(TagFieldData::TagReference(TagReferenceData {
+            group_tag_and_name: None,
+        }));
+    }
     if patch.reference_name.is_some() {
         if actual != TagFieldType::TagReference {
             bail!("a semantic tag reference targeted a non-reference field");
@@ -414,6 +427,14 @@ fn patch_value(patch: &Patch, actual: TagFieldType) -> Result<TagFieldData> {
             .context("referenceName is missing")?;
         return Ok(TagFieldData::TagReference(TagReferenceData {
             group_tag_and_name: Some((fourcc(group)?, name.replace('\\', "/"))),
+        }));
+    }
+    if patch.string_id_name.is_some() {
+        if actual != TagFieldType::StringId {
+            bail!("a semantic string-id targeted a non-string_id field");
+        }
+        return Ok(TagFieldData::StringId(StringIdData {
+            string: patch.string_id_name.clone().unwrap_or_default(),
         }));
     }
     let data = base64::engine::general_purpose::STANDARD

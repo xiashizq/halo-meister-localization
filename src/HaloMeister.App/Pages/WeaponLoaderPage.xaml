@@ -34,16 +34,22 @@
                 Spacing="8">
                 <Button
                     x:Name="RefreshButton"
+                    Height="32"
+                    VerticalAlignment="Center"
                     Click="OnRefresh"
                     Content="{i18n:Loc Key='weapon_loader.refresh'}"
                     IsEnabled="False" />
                 <Button
                     x:Name="FullPalettesButton"
+                    Height="32"
+                    VerticalAlignment="Center"
                     Click="OnToggleFullPalettes"
                     Content="{i18n:Loc Key='vehicle_workshop.add_all_vehicles_weapons'}"
                     IsEnabled="False" />
                 <Button
                     x:Name="ScanButton"
+                    Height="32"
+                    VerticalAlignment="Center"
                     Click="OnScan"
                     Content="{i18n:Loc Key='weapon_loader.scan_loaded_weapons'}"
                     IsEnabled="False"
@@ -52,6 +58,7 @@
                     x:Name="BusyRing"
                     Width="22"
                     Height="22"
+                    VerticalAlignment="Center"
                     IsActive="False" />
             </StackPanel>
         </Grid>
@@ -239,36 +246,24 @@
                                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                             TextWrapping="Wrap" />
                                     </StackPanel>
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <ComboBox
-                                            x:Name="VariantPicker"
-                                            HorizontalAlignment="Stretch"
-                                            IsEnabled="False"
-                                            SelectionChanged="OnVariantSelectionChanged">
-                                            <ComboBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <StackPanel MinWidth="300" Padding="2,4" Spacing="2">
-                                                        <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                                                        <TextBlock
-                                                            FontFamily="Consolas"
-                                                            FontSize="10"
-                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                            Text="{Binding Detail}" />
-                                                    </StackPanel>
-                                                </DataTemplate>
-                                            </ComboBox.ItemTemplate>
-                                        </ComboBox>
-                                        <Button
-                                            x:Name="ApplyVariantButton"
-                                            Grid.Column="1"
-                                            Click="OnApplyVariant"
-                                            Content="{i18n:Loc Key='weapon_loader.apply_variant'}"
-                                            IsEnabled="False" />
-                                    </Grid>
+                                    <ComboBox
+                                        x:Name="VariantPicker"
+                                        HorizontalAlignment="Stretch"
+                                        IsEnabled="False"
+                                        SelectionChanged="OnVariantSelectionChanged">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel MinWidth="300" Padding="2,4" Spacing="2">
+                                                    <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                                    <TextBlock
+                                                        FontFamily="Consolas"
+                                                        FontSize="10"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        Text="{Binding Detail}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
                                 </StackPanel>
                             </Border>
 

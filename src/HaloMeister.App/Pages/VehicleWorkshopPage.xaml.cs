@@ -2,6 +2,7 @@ using HaloMeister.App.Localization;
 using HaloMeister.App.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace HaloMeister.App.Pages;
 
@@ -131,6 +132,9 @@ public sealed partial class VehicleWorkshopPage : Page, IActivatablePage
         SelectedVehicleText.Text = _selected?.Name ?? "";
         SelectedPathText.Text = _selected?.TagPath ?? "";
         SelectedDatumText.Text = _selected?.Detail ?? "";
+        SelectedVehicleImage.Source = _selected is null
+            ? null
+            : new BitmapImage(new Uri(_selected.ImageUri));
         EnablePlayerControlButton.Visibility =
             VehicleWorkshopService.SupportsPlayerControl(_selected)
                 ? Visibility.Visible

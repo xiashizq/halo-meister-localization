@@ -11,11 +11,15 @@ public sealed partial class LiveToolsHubPage : Page, IActivatablePage
         string LabelKey,
         Symbol Icon,
         Type PageType,
-        bool Enabled = true);
+        bool Enabled = true,
+        string? Parameter = null);
+
+    private sealed record ToolTarget(Type PageType, string? Parameter);
 
     private readonly Dictionary<Type, Page> _toolCache = new();
     private string? _section;
     private Page? _activeTool;
+    private string? _activeParameter;
 
     public LiveToolsHubPage()
     {
@@ -45,8 +49,8 @@ public sealed partial class LiveToolsHubPage : Page, IActivatablePage
         if (sectionChanged)
             Configure(section);
 
-        if (ToolNav.SelectedItem is NavigationViewItem { Tag: Type pageType })
-            await ShowToolAsync(pageType);
+        if (ToolNav.SelectedItem is NavigationViewItem { Tag: ToolTarget target })
+            await ShowToolAsync(target);
     }
 
     private void Configure(string section)
@@ -64,11 +68,6 @@ public sealed partial class LiveToolsHubPage : Page, IActivatablePage
             "live-player" =>
             [
                 new("live_hub.player_tools", Symbol.Contact, typeof(PlayerToolsPage)),
-                new(
-                    "live_hub.change_character_disabled",
-                    Symbol.Contact,
-                    typeof(ChangeBipedPage),
-                    Enabled: false),
                 new("live_hub.armor_mixer", Symbol.Edit, typeof(ArmorMixerPage)),
             ],
             "live-world" =>
@@ -78,7 +77,21 @@ public sealed partial class LiveToolsHubPage : Page, IActivatablePage
             ],
             _ =>
             [
-                new("live_hub.gameplay_modifiers", Symbol.Manage, typeof(CheatGlobalsPage)),
+                new(
+                    "cheat_globals.quick_cheats",
+                    Symbol.Manage,
+                    typeof(CheatGlobalsPage),
+                    Parameter: "quick-cheats"),
+                new(
+                    "cheat_globals.player_traits",
+                    Symbol.Contact,
+                    typeof(CheatGlobalsPage),
+                    Parameter: "player-traits"),
+                new(
+                    "cheat_globals.allegiance",
+                    Symbol.People,
+                    typeof(CheatGlobalsPage),
+                    Parameter: "allegiance"),
                 new("live_hub.live_skulls", Symbol.Emoji, typeof(LiveSkullsPage)),
                 new("live_hub.other", Symbol.More, typeof(OtherGameplayPage)),
             ],
@@ -95,7 +108,7 @@ public sealed partial class LiveToolsHubPage : Page, IActivatablePage
             {
                 Content = L.Get(tool.LabelKey),
                 Icon = new SymbolIcon(tool.Icon),
-                Tag = tool.PageType,
+                Tag = new ToolTarget(tool.PageType, tool.Parameter),
                 IsEnabled = enabled,
             };
             if (!enabled)
@@ -114,22 +127,23 @@ public sealed partial class LiveToolsHubPage : Page, IActivatablePage
 
     private async void OnToolSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        if (args.SelectedItem is not NavigationViewItem { Tag: Type pageType })
+        if (args.SelectedItem is not NavigationViewItem { Tag: ToolTarget target })
             return;
 
         await Task.Yield();
-        await ShowToolAsync(pageType);
+        await ShowToolAsync(target);
     }
 
-    private async Task ShowToolAsync(Type pageType)
+    private async Task ShowToolAsync(ToolTarget target)
     {
-        if (_activeTool?.GetType() == pageType)
+        if (_activeTool?.GetType() == target.PageType &&
+            string.Equals(_activeParameter, target.Parameter, StringComparison.Ordinal))
         {
             ActivateTool(_activeTool);
             return;
         }
 
-        bool coldStart = !_toolCache.ContainsKey(pageType);
+        bool coldStart = !_toolCache.ContainsKey(target.PageType);
         if (coldStart)
         {
             SetToolLoading(true);
@@ -138,16 +152,22 @@ public sealed partial class LiveToolsHubPage : Page, IActivatablePage
 
         try
         {
-            if (!_toolCache.TryGetValue(pageType, out Page? page))
+            if (!_toolCache.TryGetValue(target.PageType, out Page? page))
             {
-                page = (Page)Activator.CreateInstance(pageType)!;
+                page = (Page)Activator.CreateInstance(target.PageType)!;
                 page.NavigationCacheMode = NavigationCacheMode.Required;
-                _toolCache[pageType] = page;
+                _toolCache[target.PageType] = page;
             }
 
-            DeactivateTool(_activeTool);
+            if (page is CheatGlobalsPage cheats && target.Parameter is not null)
+                cheats.ShowSection(target.Parameter);
+
+            if (_activeTool?.GetType() != target.PageType)
+                DeactivateTool(_activeTool);
+
             ToolFrame.Content = page;
             _activeTool = page;
+            _activeParameter = target.Parameter;
             ActivateTool(page);
         }
         finally

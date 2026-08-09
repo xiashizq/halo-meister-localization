@@ -101,43 +101,76 @@ public sealed class ProjectileSwapperService : IDisposable
     {
         string path = tagPath.Replace('\\', '/').ToLowerInvariant();
         string icon =
-            path.Contains("frag_grenade", StringComparison.Ordinal) ? "T_UI_FragGrenade_WeaponIcon.png" :
+            path.Contains("frag_grenade", StringComparison.Ordinal) ||
+            path.Contains("assault_bomb", StringComparison.Ordinal) ? "T_UI_FragGrenade_WeaponIcon.png" :
             path.Contains("plasma_grenade", StringComparison.Ordinal) ? "T_UI_PlasmaGrenade_WeaponIcon.png" :
-            path.Contains("banshee") && (path.Contains("bomb") || path.Contains("fuel")) ? "T_UI_BansheeBomb_WeaponIcon.png" :
-            path.Contains("banshee", StringComparison.Ordinal) ? "T_UI_BansheeDualCannon_WeaponIcon.png" :
-            path.Contains("wraith") && (path.Contains("mortar") || path.Contains("main")) ? "T_UI_WraithMainGun_Icon.png" :
+            path.Contains("banshee", StringComparison.Ordinal) &&
+            (path.Contains("bomb", StringComparison.Ordinal) ||
+             path.Contains("fuel", StringComparison.Ordinal)) ? "T_UI_BansheeBomb_WeaponIcon.png" :
+            path.Contains("banshee", StringComparison.Ordinal) ||
+            path.Contains("hornet", StringComparison.Ordinal) ||
+            path.Contains("pelican", StringComparison.Ordinal) ? "T_UI_BansheeDualCannon_WeaponIcon.png" :
+            path.Contains("wraith", StringComparison.Ordinal) &&
+            (path.Contains("mortar", StringComparison.Ordinal) ||
+             path.Contains("main", StringComparison.Ordinal)) ? "T_UI_WraithMainGun_Icon.png" :
             path.Contains("wraith", StringComparison.Ordinal) ? "T_UI_WraithTurret_Icon.png" :
-            path.Contains("scorpion") && (path.Contains("cannon") || path.Contains("main")) ? "T_IU_ScorpionMainGun_Icon.png" :
+            path.Contains("scorpion", StringComparison.Ordinal) &&
+            (path.Contains("cannon", StringComparison.Ordinal) ||
+             path.Contains("main", StringComparison.Ordinal)) ? "T_IU_ScorpionMainGun_Icon.png" :
             path.Contains("scorpion", StringComparison.Ordinal) ? "T_UI_ScorpionTurret_Icon.png" :
+            path.Contains("seraph", StringComparison.Ordinal) &&
+            path.Contains("missile", StringComparison.Ordinal) ? "T_UI_SeraphMissiles_Icons.png" :
             path.Contains("seraph", StringComparison.Ordinal) ? "T_UI_SeraphTurret_Icon.png" :
-            path.Contains("warthog", StringComparison.Ordinal) ? "T_UI_WarthogTurret_Icon.png" :
-            path.Contains("shade", StringComparison.Ordinal) ? "T_UI_ShadeTurret_Icon.png" :
-            path.Contains("ghost", StringComparison.Ordinal) ? "T_UI_Ghost_WeaponIcon.png" :
+            path.Contains("warthog", StringComparison.Ordinal) ||
+            path.Contains("machinegun", StringComparison.Ordinal) ||
+            path.Contains("chaingun", StringComparison.Ordinal) ? "T_UI_WarthogTurret_Icon.png" :
+            path.Contains("shade", StringComparison.Ordinal) ||
+            path.Contains("phantom", StringComparison.Ordinal) ||
+            path.Contains("spirit", StringComparison.Ordinal) ? "T_UI_ShadeTurret_Icon.png" :
+            path.Contains("ghost", StringComparison.Ordinal) ||
+            path.Contains("chopper", StringComparison.Ordinal) ||
+            path.Contains("mongoose", StringComparison.Ordinal) ? "T_UI_Ghost_WeaponIcon.png" :
             path.Contains("needle_rifle", StringComparison.Ordinal) ? "T_UI_NeedleRifle_WeaponIcon.png" :
             path.Contains("needler", StringComparison.Ordinal) ? "T_UI_Needler_WeaponIcon.png" :
-            path.Contains("plasma_pistol", StringComparison.Ordinal) ? "T_UI_PlasmaPistol_WeaponIcon.png" :
+            path.Contains("plasma_pistol", StringComparison.Ordinal) ||
+            path.Contains("jackal_shield", StringComparison.Ordinal) ? "T_UI_PlasmaPistol_WeaponIcon.png" :
             path.Contains("plasma_rifle", StringComparison.Ordinal) ||
-            path.Contains("plasma_repeater", StringComparison.Ordinal) ? "T_UI_PlasmaRifleIcon.png" :
+            path.Contains("plasma_repeater", StringComparison.Ordinal) ||
+            path.Contains("plasma_carbine", StringComparison.Ordinal) ? "T_UI_PlasmaRifleIcon.png" :
+            // SMG lives under assault_rifle/; match it before the AR fallback.
+            path.Contains("/smg", StringComparison.Ordinal) ||
+            path.Contains("smg-", StringComparison.Ordinal) ||
+            path.Contains("smg_", StringComparison.Ordinal) ? "T_UI_SMG_WeaponIcon.png" :
             path.Contains("assault_rifle", StringComparison.Ordinal) ? "T_UI_AssaultRifle_WeaponIcon.png" :
             path.Contains("battle_rifle", StringComparison.Ordinal) ||
             path.Contains("/dmr/", StringComparison.Ordinal) ? "T_UI_BattleRifle_WeaponIcon.png" :
             path.Contains("beam_rifle", StringComparison.Ordinal) ||
-            path.Contains("focus_rifle", StringComparison.Ordinal) ? "T_UI_BeamRifle_WeaponIcon.png" :
-            path.Contains("energy_sword", StringComparison.Ordinal) ? "T_UI_EnergySword_WeaponIcon.png" :
+            path.Contains("focus_rifle", StringComparison.Ordinal) ||
+            path.Contains("spartan_laser", StringComparison.Ordinal) ? "T_UI_BeamRifle_WeaponIcon.png" :
+            path.Contains("energy_sword", StringComparison.Ordinal) ||
+            path.Contains("gravity_hammer", StringComparison.Ordinal) ||
+            path.Contains("skirmisher", StringComparison.Ordinal) ? "T_UI_EnergySword_WeaponIcon.png" :
             path.Contains("fuel_rod", StringComparison.Ordinal) ||
-            path.Contains("flak_cannon", StringComparison.Ordinal) ? "T_UI_FuelRod_WeaponIcon.png" :
+            path.Contains("flak_cannon", StringComparison.Ordinal) ||
+            path.Contains("plasma_launcher", StringComparison.Ordinal) ||
+            path.Contains("concussion", StringComparison.Ordinal) ? "T_UI_FuelRod_WeaponIcon.png" :
             path.Contains("shotgun", StringComparison.Ordinal) ? "T_UI_Shotgun_WeaponIcon.png" :
-            path.Contains("/smg/", StringComparison.Ordinal) ? "T_UI_SMG_WeaponIcon.png" :
+            path.Contains("stanchion", StringComparison.Ordinal) ||
             path.Contains("sniper_rifle", StringComparison.Ordinal) ? "T_UI_SniperRifle_WeaponIcon.png" :
             path.Contains("spike_rifle", StringComparison.Ordinal) ||
             path.Contains("spiker", StringComparison.Ordinal) ? "T_UI_SpikerRifle_WeaponIcon.png" :
             path.Contains("rocket_launcher", StringComparison.Ordinal) ||
-            path.Contains("spnkr", StringComparison.Ordinal) ? "T_UI_SPNKR_WeaponIcon.png" :
-            path.Contains("sentinel_beam", StringComparison.Ordinal) ||
+            path.Contains("spnkr", StringComparison.Ordinal) ||
+            path.Contains("grenade_launcher", StringComparison.Ordinal) ? "T_UI_SPNKR_WeaponIcon.png" :
+            path.Contains("sentinel", StringComparison.Ordinal) ||
             path.Contains("target_laser", StringComparison.Ordinal) ? "T_UI_SentinelBeam_WeaponIcon.png" :
+            path.Contains("brute_shot", StringComparison.Ordinal) ||
+            path.Contains("bruteshot", StringComparison.Ordinal) ? "wiki_brute_shot.png" :
+            path.Contains("mauler", StringComparison.Ordinal) ||
+            path.Contains("excavator", StringComparison.Ordinal) ? "wiki_mauler.png" :
             path.Contains("magnum", StringComparison.Ordinal) ||
             path.Contains("pistol", StringComparison.Ordinal) ? "T_UI_Pistol_WeaponIcon.png" :
-            "T_UI_AssaultRifle_WeaponIcon.png";
+            "missing.png";
         return $"ms-appx:///Assets/WeaponIcons/{icon}";
     }
 

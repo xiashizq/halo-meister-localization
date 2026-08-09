@@ -151,6 +151,48 @@ public sealed partial class PlayerToolsPage : Page, IActivatablePage
         });
     }
 
+    private async void OnApplyPlayerScale(object sender, RoutedEventArgs e)
+    {
+        if (!TryReadPlayerScale(out float scale))
+        {
+            ShowStatus(L.Get("player_tools.select_scale"), InfoBarSeverity.Error);
+            return;
+        }
+        await RunBusy(async () =>
+        {
+            await _tools.SetScaleAsync(scale);
+            SummaryText.Text = L.Format("player_tools.scale_active", scale);
+            ShowStatus(L.Format("player_tools.scale_applied", scale), InfoBarSeverity.Warning);
+        });
+    }
+
+    private async void OnRestorePlayerScale(object sender, RoutedEventArgs e)
+    {
+        await RunBusy(async () =>
+        {
+            await _tools.SetScaleAsync(1f);
+            PlayerScaleBox.SelectedIndex = 3;
+            SummaryText.Text = L.Get("player_tools.scale_restored_summary");
+            ShowStatus(L.Get("player_tools.scale_restored"), InfoBarSeverity.Success);
+        });
+    }
+
+    private async void OnApplyPrimaryWeaponScale(object sender, RoutedEventArgs e)
+    {
+        if (!TryReadPlayerScale(out float scale))
+        {
+            ShowStatus(L.Get("player_tools.select_scale"), InfoBarSeverity.Error);
+            return;
+        }
+        await RunBusy(async () =>
+        {
+            await _tools.SetPrimaryWeaponScaleAsync(scale);
+            ShowStatus(
+                L.Format("player_tools.primary_weapon_scale_applied", scale),
+                InfoBarSeverity.Success);
+        });
+    }
+
     private async void OnSuppressPlayerInput(object sender, RoutedEventArgs e)
     {
         await RunBusy(async () =>
@@ -427,6 +469,20 @@ public sealed partial class PlayerToolsPage : Page, IActivatablePage
         return strength;
     }
 
+    private bool TryReadPlayerScale(out float scale)
+    {
+        scale = 1f;
+        return PlayerScaleBox.SelectedItem is ComboBoxItem item &&
+               item.Tag is string tag &&
+               float.TryParse(
+                   tag,
+                   NumberStyles.Float,
+                   CultureInfo.InvariantCulture,
+                   out scale) &&
+               float.IsFinite(scale) &&
+               scale is >= 0.25f and <= 1f;
+    }
+
     private PlayerCoordinates? TryReadCoordinates()
     {
         if (!TryParseCoordinate(XBox.Text, out float x) ||
@@ -504,6 +560,10 @@ public sealed partial class PlayerToolsPage : Page, IActivatablePage
         RefreshButton.IsEnabled = ready;
         EnableNoClipButton.IsEnabled = ready;
         DisableNoClipButton.IsEnabled = ready;
+        PlayerScaleBox.IsEnabled = ready;
+        ApplyPlayerScaleButton.IsEnabled = ready;
+        RestorePlayerScaleButton.IsEnabled = ready;
+        ApplyPrimaryWeaponScaleButton.IsEnabled = ready;
         SuppressPlayerInputButton.IsEnabled = ready;
         RestorePlayerInputButton.IsEnabled = ready;
         bool cameraConnected = !_busy && _camera.IsConnected;

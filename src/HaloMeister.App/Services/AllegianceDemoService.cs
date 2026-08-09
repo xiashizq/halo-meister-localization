@@ -19,7 +19,8 @@ public sealed record ObjectTeamResult(
 /// Friend/foe demo: prefer a matching scaffold squad, birth as player (1) or
 /// covenant (3). Friendlies register as a player fireteam companion and follow;
 /// hostiles do not. Optional post reinforce via <c>ai_object_set_team</c> +
-/// the object allegiance table. No per-frame AI team maintain.
+/// the object allegiance table. Spawned squads are re-pulsed into combat so
+/// they stay engaged instead of drifting back to idle/follow.
 /// </summary>
 public sealed class AllegianceDemoService
 {
@@ -30,8 +31,22 @@ public sealed class AllegianceDemoService
     private readonly ScriptingBridgeService _bridge =
         ScriptingBridgeService.Current;
     private readonly EnemySpawnerService _spawner = new();
+    private readonly object _combatLock = new();
+    private readonly Dictionary<string, bool> _combatSquads =
+        new(StringComparer.OrdinalIgnoreCase);
+    private int _maintainBusy;
+    private Timer? _maintainTimer;
 
     public ScriptingBridgeStatus BridgeStatus => _bridge.GetStatus();
+
+    public bool HasCombatMaintainTargets
+    {
+        get
+        {
+            lock (_combatLock)
+                return _combatSquads.Count > 0;
+        }
+    }
 
     /// <summary>Friendly = player (1). Hostile = covenant (3).</summary>
     public const int FriendlyTeam = 1;
@@ -79,8 +94,10 @@ public sealed class AllegianceDemoService
         // Friendly prefers an ally scaffold and registers as a player fireteam
         // companion so they follow. Hostile prefers a hostile scaffold and does
         // not join the player's fireteam. Native keeps squad team patched
-        // through actor_new + finalize. clearSquadObjective only applies to
-        // borrowed encounter squads; dedicated hm_* keep combat objective.
+        // through actor_new + finalize.
+        //
+        // Keep initial objective/task for both stances so actor_new inherits
+        // attack desire. Dedicated hm_* always keep combat objective.
         bool followPlayer = campaignTeam == FriendlyTeam;
         ScriptExecutionResult result = await _spawner.SpawnGroupAsync(
             character,
@@ -90,77 +107,280 @@ public sealed class AllegianceDemoService
             formationOffsetY,
             weapon,
             followPlayer: followPlayer,
-            clearSquadObjective: true,
+            clearSquadObjective: false,
             campaignTeam: (ushort)campaignTeam,
             cancellationToken: cancellationToken);
         int? actor = TryParseActorDatum(result.Message);
         SpawnScaffoldDiagnosis? diagnosis = _spawner.LastScaffoldDiagnosis;
-        // Friendlies already get fireteam follow via native finalize; skip the
-        // HaloScript wake so ai_renew does not knock them out of the fireteam.
-        if (!followPlayer)
+        result = await WakeSpawnedSquadAsync(
+            result,
+            diagnosis,
+            preserveFireteam: followPlayer,
+            cancellationToken);
+        if (result.Outcome == ScriptOutcome.Confirmed)
         {
-            result = await WakeSpawnedSquadAsync(
-                result,
-                diagnosis,
-                campaignTeam,
-                cancellationToken);
-        }
-        else if (result.Outcome == ScriptOutcome.Confirmed)
-        {
-            result = result with
+            string squadName = !string.IsNullOrWhiteSpace(diagnosis?.SquadName)
+                ? diagnosis!.SquadName
+                : followPlayer
+                    ? EnemySpawnerService.DedicatedAllySquadName
+                    : EnemySpawnerService.DedicatedHostileSquadName;
+            TrackCombatSquad(squadName, preserveFireteam: followPlayer);
+            if (followPlayer)
             {
-                Message = $"{result.Message} follow=fireteam",
-            };
+                result = result with
+                {
+                    Message = $"{result.Message} follow=fireteam combat=maintain",
+                };
+            }
+            else
+            {
+                result = result with
+                {
+                    Message = $"{result.Message} combat=maintain",
+                };
+            }
         }
         return new AllegianceDemoSpawnResult(result, actor, diagnosis);
     }
 
+    public void TrackCombatSquad(string squadName, bool preserveFireteam)
+    {
+        if (string.IsNullOrWhiteSpace(squadName))
+            return;
+        lock (_combatLock)
+            _combatSquads[squadName.Trim()] = preserveFireteam;
+        EnsureMaintainTimer();
+    }
+
+    public void ClearCombatMaintain()
+    {
+        lock (_combatLock)
+            _combatSquads.Clear();
+        Timer? timer = Interlocked.Exchange(ref _maintainTimer, null);
+        timer?.Dispose();
+    }
+
+    private void EnsureMaintainTimer()
+    {
+        if (_maintainTimer is not null)
+            return;
+        // Pulse often enough that actors cannot cool back to idle/follow.
+        var timer = new Timer(
+            static state =>
+            {
+                if (state is not AllegianceDemoService service)
+                    return;
+                _ = service.MaintainCombatAsync();
+            },
+            this,
+            TimeSpan.FromMilliseconds(800),
+            TimeSpan.FromMilliseconds(1200));
+        if (Interlocked.CompareExchange(ref _maintainTimer, timer, null) is not null)
+            timer.Dispose();
+    }
+
     /// <summary>
-    /// Best-effort for hostile spawns: unsuppress combat and renew so actors
-    /// leave the idle stand pose after actor_new.
+    /// Re-assert force-active / combat status / berserk for every tracked
+    /// spawn squad. Safe to call from a UI timer; overlaps are skipped.
+    /// </summary>
+    public async Task MaintainCombatAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (Interlocked.Exchange(ref _maintainBusy, 1) == 1)
+            return;
+        try
+        {
+            ScriptingBridgeStatus status = BridgeStatus;
+            if (!status.IsRuntimeReady || status.IsStale)
+                return;
+
+            List<KeyValuePair<string, bool>> squads;
+            lock (_combatLock)
+                squads = _combatSquads.ToList();
+            if (squads.Count == 0)
+                return;
+
+            foreach ((string squadName, bool preserveFireteam) in squads)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await PulseCombatAsync(
+                    squadName,
+                    preserveFireteam,
+                    cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Timer tick cancellation is fine.
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _maintainBusy, 0);
+        }
+    }
+
+    private async Task PulseCombatAsync(
+        string squadName,
+        bool preserveFireteam,
+        CancellationToken cancellationToken)
+    {
+        // Keep them in the hottest combat band. Friendlies skip ai_renew so
+        // fireteam membership survives the pulse.
+        var lines = new List<string>
+        {
+            $"ai_suppress_combat {squadName} false",
+            $"ai_force_active {squadName} true",
+            $"ai_set_weapon_up {squadName} true",
+            $"ai_berserk {squadName} true",
+        };
+        if (preserveFireteam)
+        {
+            lines.Add($"ai_prefer_target_team {squadName} covenant");
+            lines.Add($"ai_prefer_target_team {squadName} brute");
+            lines.Add($"ai_prefer_target_team {squadName} flood");
+        }
+        else
+        {
+            lines.Add($"ai_prefer_target (players) true");
+        }
+
+        await TryRunHaloScriptAsync(lines, cancellationToken);
+        // Status enum spelling differs by build — try both, ignore failures.
+        if (!await TryRunHaloScriptAsync(
+                [$"ai_set_combat_status {squadName} dangerous_enemy"],
+                cancellationToken))
+        {
+            await TryRunHaloScriptAsync(
+                [$"ai_set_combat_status {squadName} ai_combat_status_dangerous_enemy"],
+                cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort combat wake. Hostiles renew + lock onto the player.
+    /// Friendlies skip <c>ai_renew</c> (keeps fireteam follow) but raise
+    /// combat status, weapon readiness, preferred hostile teams, and berserk
+    /// so they actually open fire instead of idle-following.
     /// </summary>
     private async Task<ScriptExecutionResult> WakeSpawnedSquadAsync(
         ScriptExecutionResult spawnResult,
         SpawnScaffoldDiagnosis? diagnosis,
-        int campaignTeam,
+        bool preserveFireteam,
         CancellationToken cancellationToken)
     {
         if (spawnResult.Outcome != ScriptOutcome.Confirmed)
             return spawnResult;
 
-        string squadName = diagnosis?.UsedDedicated == true
-            && !string.IsNullOrWhiteSpace(diagnosis.SquadName)
-            ? diagnosis.SquadName
+        string fallback = preserveFireteam
+            ? EnemySpawnerService.DedicatedAllySquadName
             : EnemySpawnerService.DedicatedHostileSquadName;
+        string squadName = !string.IsNullOrWhiteSpace(diagnosis?.SquadName)
+            ? diagnosis!.SquadName
+            : fallback;
 
-        var lines = new List<string>
+        var wakeTags = new List<string>();
+        if (preserveFireteam)
         {
-            $"ai_suppress_combat {squadName} false",
-            $"ai_renew {squadName}",
-            $"ai_magically_see_object {squadName} (player_get 0)",
-        };
+            if (await TryRunHaloScriptAsync(
+                    [
+                        $"ai_suppress_combat {squadName} false",
+                        $"ai_force_active {squadName} true",
+                        $"ai_set_weapon_up {squadName} true",
+                    ],
+                    cancellationToken))
+            {
+                wakeTags.Add("armed");
+            }
 
+            // Enum spelling varies by build; try both forms.
+            if (await TryRunHaloScriptAsync(
+                    [$"ai_set_combat_status {squadName} dangerous_enemy"],
+                    cancellationToken) ||
+                await TryRunHaloScriptAsync(
+                    [$"ai_set_combat_status {squadName} ai_combat_status_dangerous_enemy"],
+                    cancellationToken))
+            {
+                wakeTags.Add("status");
+            }
+
+            if (await TryRunHaloScriptAsync(
+                    [
+                        $"ai_prefer_target_team {squadName} covenant",
+                        $"ai_prefer_target_team {squadName} brute",
+                        $"ai_prefer_target_team {squadName} flood",
+                    ],
+                    cancellationToken))
+            {
+                wakeTags.Add("hunt");
+            }
+
+            // Optional: if dedicated hostiles exist in the mission, grant magic LOS.
+            string hostileSquad = EnemySpawnerService.DedicatedHostileSquadName;
+            if (await TryRunHaloScriptAsync(
+                    [$"ai_magically_see {squadName} {hostileSquad}"],
+                    cancellationToken))
+            {
+                wakeTags.Add("see");
+            }
+
+            if (await TryRunHaloScriptAsync(
+                    [$"ai_berserk {squadName} true"],
+                    cancellationToken))
+            {
+                wakeTags.Add("berserk");
+            }
+        }
+        else
+        {
+            if (await TryRunHaloScriptAsync(
+                    [
+                        $"ai_suppress_combat {squadName} false",
+                        $"ai_force_active {squadName} true",
+                        $"ai_renew {squadName}",
+                        $"ai_magically_see_object {squadName} (player_get 0)",
+                    ],
+                    cancellationToken))
+            {
+                wakeTags.Add("see");
+            }
+
+            if (await TryRunHaloScriptAsync(
+                    [
+                        $"ai_prefer_target (players) true",
+                        $"ai_berserk {squadName} true",
+                    ],
+                    cancellationToken))
+            {
+                wakeTags.Add("berserk");
+            }
+        }
+
+        if (wakeTags.Count == 0)
+            return spawnResult;
+
+        return spawnResult with
+        {
+            Message = $"{spawnResult.Message} wake={squadName}:{string.Join('+', wakeTags)}",
+        };
+    }
+
+    private async Task<bool> TryRunHaloScriptAsync(
+        IReadOnlyList<string> lines,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            ScriptExecutionResult wake = await _bridge.ExecuteAsync(
+            ScriptExecutionResult result = await _bridge.ExecuteAsync(
                 ScriptLanguage.HaloScript,
                 string.Join('\n', lines),
                 TimeSpan.FromSeconds(8),
                 cancellationToken);
-            if (wake.Outcome == ScriptOutcome.Confirmed)
-            {
-                return spawnResult with
-                {
-                    Message = $"{spawnResult.Message} wake={squadName}",
-                };
-            }
+            return result.Outcome == ScriptOutcome.Confirmed;
         }
         catch
         {
-            // Wake is optional; spawn already succeeded with correct team.
+            return false;
         }
-
-        return spawnResult;
     }
 
     public async Task<ObjectTeamResult> ApplyObjectTeamAsync(

@@ -1842,12 +1842,16 @@ std::string spawn(
                     : 0ULL);
             throw std::runtime_error(message);
         }
-        float distance = request.kind == SpawnKind::biped ? 0.0f : 2.5f;
+        // A zero-distance spawn can remain inside an existing collision pair,
+        // which does not raise a new bump event on subsequent switch attempts.
+        // Keep the target capsule overlapping the player, but enter it from a
+        // short distance in front to force a fresh collision transition.
+        float distance = request.kind == SpawnKind::biped ? 0.35f : 2.5f;
         placement_request.x = position[0] + forward[0] * distance;
         placement_request.y = position[1] + forward[1] * distance;
         placement_request.z =
             position[2] + forward[2] * distance +
-            (request.kind == SpawnKind::biped ? 0.0f : 0.75f);
+            (request.kind == SpawnKind::biped ? 0.10f : 0.75f);
     }
 
     DWORD exception_code = 0;

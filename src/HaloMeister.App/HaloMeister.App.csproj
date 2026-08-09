@@ -56,6 +56,7 @@
     <Content Include="Assets\Customization\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\DifficultyIcons\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\WeaponIcons\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\VehicleIcons\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\SkullIcons\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Definitions\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\GameBuildProfiles.json" CopyToOutputDirectory="PreserveNewest" />

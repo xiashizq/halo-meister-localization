@@ -8,5 +8,6 @@ internal static class BuildPolicy
     public static bool IsRetail { get; } = false;
 #endif
 
-    public static bool EnforceCustomizationOwnership => IsRetail;
+    // Model / cosmetic variant lists stay fully available in all builds.
+    public static bool EnforceCustomizationOwnership => false;
 }
