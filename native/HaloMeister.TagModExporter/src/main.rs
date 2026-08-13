@@ -1,5 +1,6 @@
 mod ensure_demo_squads;
 mod expand_palettes;
+mod tune_marine_ai;
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -70,6 +71,8 @@ fn run() -> Result<()> {
     let mut inspect = None;
     let mut expand_palettes = false;
     let mut ensure_demo_squads = false;
+    let mut dump_demo_squads = false;
+    let mut dump_filter = None;
     let mut list_ai_characters = false;
     let mut dry_run = false;
     while let Some(argument) = args.next() {
@@ -81,6 +84,10 @@ fn run() -> Result<()> {
             "--inspect" => inspect = args.next().map(|value| value.to_string_lossy().into_owned()),
             "--expand-palettes" => expand_palettes = true,
             "--ensure-demo-squads" => ensure_demo_squads = true,
+            "--dump-demo-squads" => dump_demo_squads = true,
+            "--filter" => {
+                dump_filter = args.next().map(|value| value.to_string_lossy().into_owned())
+            }
             "--list-ai-characters" => list_ai_characters = true,
             "--dry-run" => dry_run = true,
             other => bail!("unknown argument '{other}'"),
@@ -88,6 +95,16 @@ fn run() -> Result<()> {
     }
     let paks = paks.context("--paks is required")?;
     let archives = open_archives(&paks)?;
+    if dump_demo_squads {
+        let lines = ensure_demo_squads::dump_dedicated_squad_usability(
+            &archives,
+            dump_filter.as_deref(),
+        )?;
+        for line in lines {
+            println!("{line}");
+        }
+        return Ok(());
+    }
     if list_ai_characters {
         let curated = expand_palettes::list_ai_character_catalog(&archives)?;
         let all = expand_palettes::list_all_ai_character_paths(&archives)?;

@@ -34,6 +34,8 @@ public enum ScriptLanguage
     PlayerNoClip,
     PlayerTeam,
     ObjectTeam,
+    ObjectPosition,
+    ObjectTeleport,
     PlayerPosition,
     PlayerUnitTagRead,
     PlayerInput,
@@ -304,6 +306,8 @@ public sealed class ScriptingBridgeService
                 ScriptLanguage.PlayerNoClip => "player_noclip",
                 ScriptLanguage.PlayerTeam => "player_team",
                 ScriptLanguage.ObjectTeam => "object_team",
+                ScriptLanguage.ObjectPosition => "object_position",
+                ScriptLanguage.ObjectTeleport => "object_teleport",
                 ScriptLanguage.PlayerPosition => "player_position",
                 ScriptLanguage.PlayerUnitTagRead => "player_unit_tag_read",
                 ScriptLanguage.PlayerInput => "player_input",
@@ -902,6 +906,8 @@ public sealed class ScriptingBridgeService
                     ScriptLanguage.PlayerNoClip or
                     ScriptLanguage.PlayerTeam or
                     ScriptLanguage.ObjectTeam or
+                    ScriptLanguage.ObjectPosition or
+                    ScriptLanguage.ObjectTeleport or
                     ScriptLanguage.PlayerPosition or
                     ScriptLanguage.PlayerUnitTagRead or
                     ScriptLanguage.PlayerInput or
@@ -912,6 +918,13 @@ public sealed class ScriptingBridgeService
                     ScriptLanguage.MachinimaEnable or
                     ScriptLanguage.MachinimaDisable or
                     ScriptLanguage.MachinimaCameraTeleport =>
+                    ScriptOutcome.Confirmed,
+                // Deferred AI finalize writes "submitted" only after actors exist
+                // and companion/team restamp finished — treat as confirmed so
+                // callers can track datums / recall.
+                "submitted" when language is
+                    ScriptLanguage.BlamAiSpawn or
+                    ScriptLanguage.BlamAiTeamSpawn =>
                     ScriptOutcome.Confirmed,
                 "ok" => ScriptOutcome.Submitted,
                 "submitted" => ScriptOutcome.Submitted,
@@ -1402,6 +1415,8 @@ public sealed class ScriptingBridgeService
             ScriptLanguage.PlayerTeleport => "player teleport",
             ScriptLanguage.PlayerNoClip => "player no-clip",
             ScriptLanguage.PlayerTeam => "player allegiance",
+            ScriptLanguage.ObjectPosition => "object position",
+            ScriptLanguage.ObjectTeleport => "object teleport",
             ScriptLanguage.PlayerPosition => "player position",
             ScriptLanguage.PlayerUnitTagRead => "read controlled player unit tag",
             ScriptLanguage.PlayerInput => "suppress or restore player input",

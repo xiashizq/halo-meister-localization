@@ -544,10 +544,10 @@ public sealed partial class SpawnerPage : Page, IActivatablePage
     private static (float X, float Y) FormationOffset(int batchIndex) =>
         batchIndex switch
         {
-            0 => (0, 0),
+            0 => (0f, 0f),
             _ when batchIndex % 2 == 1 =>
-                (-3.2f * ((batchIndex + 1) / 2), -2.0f),
-            _ => (3.2f * (batchIndex / 2), -2.0f),
+                (-0.9f * ((batchIndex + 1) / 2), 0f),
+            _ => (0.9f * (batchIndex / 2), 0f),
         };
 
     private void RefreshTeamComposition()

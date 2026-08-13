@@ -59,7 +59,8 @@ internal static class GameBuildProfileCatalog
                     L.Get("build_profile.missing_pe_header"));
         }
 
-        foreach (GameBuildProfile profile in Load(catalogPath))
+        IReadOnlyList<GameBuildProfile> profiles = Load(catalogPath);
+        foreach (GameBuildProfile profile in profiles)
         {
             if (profile.Sha256.Equals(hash, StringComparison.OrdinalIgnoreCase) &&
                 profile.PeTimestamp == timestamp &&
@@ -72,10 +73,26 @@ internal static class GameBuildProfileCatalog
 
         throw new NotSupportedException(
             L.Format(
-                "build_profile.unsupported_dll",
+                ClassifyUnsupportedBuildKey(profiles, timestamp),
                 hash,
                 $"0x{timestamp:X8}",
                 $"0x{imageSize:X8}"));
+    }
+
+    private static string ClassifyUnsupportedBuildKey(
+        IReadOnlyList<GameBuildProfile> profiles,
+        int timestamp)
+    {
+        if (profiles.Count == 0)
+            return "build_profile.unsupported_dll";
+
+        int oldestSupported = profiles.Min(profile => profile.PeTimestamp);
+        int newestSupported = profiles.Max(profile => profile.PeTimestamp);
+        if (timestamp < oldestSupported)
+            return "build_profile.unsupported_dll_outdated";
+        if (timestamp > newestSupported)
+            return "build_profile.unsupported_dll_newer";
+        return "build_profile.unsupported_dll";
     }
 
     public static CapabilityValidationLevel GetCapability(

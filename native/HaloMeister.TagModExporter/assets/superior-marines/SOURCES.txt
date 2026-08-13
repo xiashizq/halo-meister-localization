@@ -1,0 +1,6 @@
+Eridnus Superior Marines v1.3
+Source overlay: Eridnus__Superior_Marines_v1-3_P
+Tag: objects/characters/marine/ai/trooper.character
+Extracted as the .ubulk payload (46916 bytes) for MMYJ_FULL_VEHI_WAP_P.
+Bake-time retune in tune_marine_ai.rs: press/flank, melee, less cover/retreat.
+

@@ -30,6 +30,7 @@ public sealed record SpawnScaffoldDiagnosis(
     bool WantedFriendly,
     bool UsedDedicated,
     bool UsedHostileFallback,
+    bool FireteamFollow,
     int AllyScaffoldCount,
     int HostileScaffoldCount,
     string Summary)
@@ -37,8 +38,8 @@ public sealed record SpawnScaffoldDiagnosis(
     public override string ToString() =>
         $"squad={SquadIndex}:{SquadName} team={TeamIndex} objective={ObjectiveIndex} " +
         $"wantedFriendly={WantedFriendly} dedicated={UsedDedicated} " +
-        $"hostileFallback={UsedHostileFallback} ally={AllyScaffoldCount} " +
-        $"hostile={HostileScaffoldCount} | {Summary}";
+        $"hostileFallback={UsedHostileFallback} fireteam={FireteamFollow} " +
+        $"ally={AllyScaffoldCount} hostile={HostileScaffoldCount} | {Summary}";
 }
 
 /// <summary>
@@ -244,8 +245,12 @@ public sealed class EnemySpawnerService : IDisposable
         {
             unsuppressPatches = [];
         }
+        if (plan.Diagnosis.FireteamFollow)
+            ClearDedicatedAllyFireteamAbsorber(plan.Template);
         try
         {
+            if (plan.Diagnosis.FireteamFollow)
+                await TryLockFireteamAbsorbAsync(cancellationToken);
             // ai_team payload carries squad team override so actor_new is born
             // into the intended campaign team (post-spawn object_team alone
             // cannot fully reverse birth-time combat disposition).
@@ -271,6 +276,13 @@ public sealed class EnemySpawnerService : IDisposable
             try { RestorePatches(unsuppressPatches); }
             catch { /* best-effort */ }
             RestorePatches(objectivePatches);
+            // Mute-flag restore writes the original squad flags word, which
+            // would turn fireteam absorber back on. Re-clear after restore.
+            if (plan.Diagnosis.FireteamFollow)
+            {
+                try { ClearDedicatedAllyFireteamAbsorber(plan.Template); }
+                catch { /* best-effort */ }
+            }
         }
     }
 
@@ -309,6 +321,9 @@ public sealed class EnemySpawnerService : IDisposable
             field.ChildBlockDefinition == "squads_block")
             ?? throw new InvalidDataException("The loaded scenario has no readable squads.");
 
+        RuntimeTagFieldValue? palette = root.FirstOrDefault(field =>
+            field.ChildBlockDefinition == "character_palette_block" &&
+            field.CanOpenBlock);
         int ally = 0;
         int hostile = 0;
         int dedicatedAlly = 0;
@@ -341,10 +356,24 @@ public sealed class EnemySpawnerService : IDisposable
             string name = ReadSquadName(squad);
             bool isFriendly = teamIndex is 1 or 2;
             short objective = ReadOptionalShort(squad, "initial objective") ?? -1;
+            // Match BuildPlan: name alone is not enough. d40 shipped hm_ally with
+            // spawn points that had character type=-1 and cell=-1, so Probe said
+            // dedicatedAlly=1 while Spawn still borrowed hostile scaffolds.
+            bool buildPlanUsable = palette is not null &&
+                SquadHasBuildPlanUsableSpawnPoint(
+                    scenario, squad, palette, spawnPoints);
             if (IsDedicatedName(name, DedicatedAllySquadName))
-                dedicatedAlly++;
-            if (IsDedicatedName(name, DedicatedHostileSquadName))
-                dedicatedHostile++;
+            {
+                if (buildPlanUsable)
+                    dedicatedAlly++;
+            }
+            else if (IsDedicatedName(name, DedicatedHostileSquadName))
+            {
+                if (buildPlanUsable)
+                    dedicatedHostile++;
+            }
+            if (!buildPlanUsable)
+                continue;
             if (isFriendly)
             {
                 ally++;
@@ -476,6 +505,8 @@ public sealed class EnemySpawnerService : IDisposable
         TaskFlagSuppressCombat | (1 << 6) | (1 << 7) | (1 << 8);
     // squads_block.flags bits 0-2 = blind/deaf/braindead
     private const uint SquadFlagMuteMask = 0b111;
+    // bit 5 = fireteam absorber (nearby player-team squads join the fireteam)
+    private const uint SquadFlagFireteamAbsorber = 1u << 5;
 
     private List<MemoryPatch> BeginUnsuppressScaffoldCombat(SpawnTemplate template)
     {
@@ -498,7 +529,10 @@ public sealed class EnemySpawnerService : IDisposable
         {
             uint flags = BinaryPrimitives.ReadUInt32LittleEndian(
                 _memory.ReadBytes(template.SquadFlagsAddress, 4));
-            uint cleared = flags & ~SquadFlagMuteMask;
+            uint mask = SquadFlagMuteMask;
+            if (IsDedicatedName(template.SquadName, DedicatedAllySquadName))
+                mask |= SquadFlagFireteamAbsorber;
+            uint cleared = flags & ~mask;
             if (cleared != flags)
             {
                 byte[] original = _memory.ReadBytes(template.SquadFlagsAddress, 4);
@@ -510,6 +544,50 @@ public sealed class EnemySpawnerService : IDisposable
         }
 
         return patches;
+    }
+
+    /// <summary>
+    /// Keep fireteam follow on <c>hm_ally</c> only. Clearing absorber here is
+    /// persistent for the loaded mission so cloned donor flags cannot vacuum
+    /// nearby story squads into the player's fireteam.
+    /// </summary>
+    private void ClearDedicatedAllyFireteamAbsorber(SpawnTemplate template)
+    {
+        if (template.SquadFlagsAddress == 0 ||
+            !IsDedicatedName(template.SquadName, DedicatedAllySquadName))
+        {
+            return;
+        }
+
+        uint flags = BinaryPrimitives.ReadUInt32LittleEndian(
+            _memory.ReadBytes(template.SquadFlagsAddress, 4));
+        uint cleared = flags & ~SquadFlagFireteamAbsorber;
+        if (cleared == flags)
+            return;
+        Span<byte> bytes = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, cleared);
+        _memory.WriteVerified(template.SquadFlagsAddress, bytes);
+    }
+
+    private async Task TryLockFireteamAbsorbAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _bridge.ExecuteAsync(
+                ScriptLanguage.HaloScript,
+                string.Join(
+                    '\n',
+                    [
+                        "ai_player_set_fireteam_max_squad_absorb_distance (player_get 0) 0",
+                        $"ai_set_fireteam_absorber {DedicatedAllySquadName} false",
+                    ]),
+                TimeSpan.FromSeconds(8),
+                cancellationToken);
+        }
+        catch
+        {
+            // Follow still works via native fireteam; absorb lock is best-effort.
+        }
     }
 
     private long ResolveTaskFlagsAddress(
@@ -1449,7 +1527,11 @@ public sealed class EnemySpawnerService : IDisposable
             nearest,
             preferFriendly,
             allySquads,
-            hostileSquads);
+            hostileSquads,
+            followPlayer);
+        // Native fireteam is squad-wide. Only hm_ally should follow; borrowing
+        // a mission squad would drag that whole encounter onto the player.
+        bool fireteamFollow = diagnosis.FireteamFollow;
 
         if (followPlayer || placementCount > 1 || campaignTeam is not null)
         {
@@ -1479,7 +1561,7 @@ public sealed class EnemySpawnerService : IDisposable
                     string.Join(',', parts),
                     formationOffsetX,
                     formationOffsetY,
-                    followPlayer),
+                    fireteamFollow),
                 nearest,
                 diagnosis);
         }
@@ -1503,7 +1585,7 @@ public sealed class EnemySpawnerService : IDisposable
                 payload,
                 formationOffsetX,
                 formationOffsetY,
-                followPlayer),
+                fireteamFollow),
             nearest,
             diagnosis);
     }
@@ -1512,7 +1594,8 @@ public sealed class EnemySpawnerService : IDisposable
         SpawnTemplate template,
         bool wantedFriendly,
         int allyScaffoldCount,
-        int hostileScaffoldCount)
+        int hostileScaffoldCount,
+        bool followPlayer)
     {
         bool usedDedicated =
             (wantedFriendly &&
@@ -1521,6 +1604,10 @@ public sealed class EnemySpawnerService : IDisposable
              IsDedicatedName(template.SquadName, DedicatedHostileSquadName));
         bool usedHostileFallback =
             wantedFriendly && template.TeamIndex is not (1 or 2);
+        bool fireteamFollow =
+            followPlayer &&
+            wantedFriendly &&
+            usedDedicated;
         string name = string.IsNullOrWhiteSpace(template.SquadName)
             ? $"#{template.SquadIndex}"
             : template.SquadName;
@@ -1537,9 +1624,10 @@ public sealed class EnemySpawnerService : IDisposable
             summary =
                 $"Borrowed hostile scaffold {name} " +
                 $"(authored team {template.TeamIndex}, objective {template.ObjectiveIndex}); " +
-                $"no usable player/human spawn points in this mission " +
+                $"no BuildPlan-usable ally scaffold in this mission " +
                 $"(ally={allyScaffoldCount}, hostile={hostileScaffoldCount}). " +
-                $"Need offline {DedicatedAllySquadName}/{DedicatedHostileSquadName} squads.";
+                $"Reinstall built-in mod if {DedicatedAllySquadName} is missing or has " +
+                $"character type/cell=-1 spawn points.";
         }
         else
         {
@@ -1547,6 +1635,13 @@ public sealed class EnemySpawnerService : IDisposable
                 $"scaffold={name} team={template.TeamIndex} " +
                 $"objective={template.ObjectiveIndex} " +
                 $"ally={allyScaffoldCount} hostile={hostileScaffoldCount}";
+        }
+
+        if (wantedFriendly)
+        {
+            summary += fireteamFollow
+                ? " follow=hm_ally"
+                : " follow=off";
         }
 
         return new SpawnScaffoldDiagnosis(
@@ -1557,6 +1652,7 @@ public sealed class EnemySpawnerService : IDisposable
             wantedFriendly,
             usedDedicated,
             usedHostileFallback,
+            fireteamFollow,
             allyScaffoldCount,
             hostileScaffoldCount,
             summary);
@@ -1573,6 +1669,66 @@ public sealed class EnemySpawnerService : IDisposable
         return string.Create(
             CultureInfo.InvariantCulture,
             $"{payload};{x:R};{y:R};{(followPlayer ? 1 : 0)}");
+    }
+
+    private bool SquadHasBuildPlanUsableSpawnPoint(
+        RuntimeTagEntry scenario,
+        IReadOnlyList<RuntimeTagFieldValue> squad,
+        RuntimeTagFieldValue palette,
+        RuntimeTagFieldValue spawnPoints)
+    {
+        for (int pointIndex = 0;
+             pointIndex < Math.Min(spawnPoints.ChildCount, 256);
+             pointIndex++)
+        {
+            IReadOnlyList<RuntimeTagFieldValue> point = ReadBlock(
+                scenario, spawnPoints, pointIndex);
+            RuntimeTagFieldValue? characterType = point.FirstOrDefault(field =>
+                field.Type == "short_block_index" &&
+                field.Name.StartsWith("character type", StringComparison.OrdinalIgnoreCase));
+            RuntimeTagFieldValue? position = point.FirstOrDefault(field =>
+                field.Type == "real_point_3d" &&
+                field.Name.StartsWith("position", StringComparison.OrdinalIgnoreCase));
+            RuntimeTagFieldValue? actorVariant = point.FirstOrDefault(field =>
+                field.Type == "string_id" &&
+                string.Equals(
+                    CleanFieldName(field.Name),
+                    "actor variant name",
+                    StringComparison.OrdinalIgnoreCase));
+            if (characterType is null || position is null ||
+                actorVariant is null || actorVariant.Size != 4)
+                continue;
+            short paletteIndex = ReadInt16(characterType.Address);
+            if (paletteIndex < 0)
+            {
+                RuntimeTagFieldValue? cellIndexField = point.FirstOrDefault(field =>
+                    field.Type == "custom_short_block_index" &&
+                    field.Name.StartsWith("cell", StringComparison.OrdinalIgnoreCase));
+                if (cellIndexField is null) continue;
+                short cellIndex = ReadInt16(cellIndexField.Address);
+                if (cellIndex < 0) continue;
+                paletteIndex = FindCellPaletteIndex(scenario, squad, cellIndex);
+                if (paletteIndex < 0) continue;
+            }
+            if (paletteIndex >= palette.ChildCount) continue;
+            RuntimeTagFieldValue? reference = ReadBlock(
+                scenario, palette, paletteIndex).FirstOrDefault(field =>
+                    field.IsTagReference);
+            if (reference is null) continue;
+            RuntimeTagEntry? sourceCharacter = _tags.FirstOrDefault(tag =>
+                tag.Index == reference.ReferencedTagIndex &&
+                string.Equals(
+                    tag.Group,
+                    "char",
+                    StringComparison.OrdinalIgnoreCase));
+            if (sourceCharacter is null ||
+                sourceCharacter.Name.Contains(
+                    @"\null\",
+                    StringComparison.OrdinalIgnoreCase))
+                continue;
+            return true;
+        }
+        return false;
     }
 
     private short FindCellPaletteIndex(

@@ -1,4 +1,5 @@
 use crate::ensure_demo_squads;
+use crate::tune_marine_ai;
 use anyhow::{Context, Result, anyhow, bail};
 use blam_tags::fields::{TagFieldData, TagReferenceData};
 use blam_tags::iostore::IoStoreArchive;
@@ -8,6 +9,46 @@ use std::path::Path;
 
 const MAX_OBJECT_PALETTE_ENTRIES: usize = 256;
 const MAX_CHARACTER_PALETTE_ENTRIES: usize = 64;
+
+struct BakedAiOverride {
+    file_suffix: &'static str,
+    bytes: &'static [u8],
+    label: &'static str,
+}
+
+/// Eridnus Superior Marines v1.3 + Superior Covenant v1.2 character AI.
+const SUPERIOR_AI_TAGS: &[BakedAiOverride] = &[
+    BakedAiOverride {
+        file_suffix: "objects/characters/marine/ai/trooper-character.ubulk",
+        bytes: include_bytes!("../assets/superior-marines/trooper-character.ubulk"),
+        label: "Superior Marines trooper",
+    },
+    BakedAiOverride {
+        file_suffix: "objects/characters/elite/ai/elite-character.ubulk",
+        bytes: include_bytes!("../assets/superior-covenant/elite-character.ubulk"),
+        label: "Superior Covenant elite",
+    },
+    BakedAiOverride {
+        file_suffix: "objects/characters/grunt/ai/grunt-character.ubulk",
+        bytes: include_bytes!("../assets/superior-covenant/grunt-character.ubulk"),
+        label: "Superior Covenant grunt",
+    },
+    BakedAiOverride {
+        file_suffix: "objects/characters/jackal/ai/jackal-character.ubulk",
+        bytes: include_bytes!("../assets/superior-covenant/jackal-character.ubulk"),
+        label: "Superior Covenant jackal",
+    },
+    BakedAiOverride {
+        file_suffix: "objects/characters/brute/ai/brute-character.ubulk",
+        bytes: include_bytes!("../assets/superior-covenant/brute-character.ubulk"),
+        label: "Superior Covenant brute",
+    },
+    BakedAiOverride {
+        file_suffix: "objects/characters/hunter/ai/hunter-character.ubulk",
+        bytes: include_bytes!("../assets/superior-covenant/hunter-character.ubulk"),
+        label: "Superior Covenant hunter",
+    },
+];
 const BIPED_GROUP: u32 = u32::from_be_bytes(*b"bipd");
 const VEHICLE_GROUP: u32 = u32::from_be_bytes(*b"vehi");
 const WEAPON_GROUP: u32 = u32::from_be_bytes(*b"weap");
@@ -151,6 +192,31 @@ pub fn expand_all_mission_palettes(
         edited.push((*archive_index, rel_path.clone(), serialized));
     }
 
+    let mut ai_overrides = Vec::new();
+    for baked in SUPERIOR_AI_TAGS {
+        let bytes = if baked.file_suffix.contains("trooper-character") {
+            let (tuned, lines) = tune_marine_ai::apply_aggressive_trooper(baked.bytes)?;
+            report.lines.extend(lines);
+            tuned
+        } else {
+            TagFile::read_from_bytes(baked.bytes).with_context(|| {
+                format!(
+                    "bundled {} ({}) is not a readable tag",
+                    baked.label, baked.file_suffix
+                )
+            })?;
+            baked.bytes.to_vec()
+        };
+        let (archive_index, rel_path) = find_first_ubulk(archives, baked.file_suffix)
+            .with_context(|| format!("could not find vanilla {}", baked.file_suffix))?;
+        report.lines.push(format!(
+            "{}: overlay {rel_path} ({} bytes)",
+            baked.label,
+            bytes.len()
+        ));
+        ai_overrides.push((archive_index, rel_path, bytes));
+    }
+
     if dry_run {
         report.lines.push("Dry run: no overlay files written.".to_owned());
         return Ok(report);
@@ -159,18 +225,21 @@ pub fn expand_all_mission_palettes(
         report.lines.push(
             "Every scenario already contained the full catalogs and demo squads.".to_owned(),
         );
-        return Ok(report);
     }
 
-    let overrides: Vec<(&IoStoreArchive, &str, &[u8])> = edited
+    let mut overrides: Vec<(&IoStoreArchive, &str, &[u8])> = edited
         .iter()
         .map(|(archive, path, bytes)| (&archives[*archive], path.as_str(), bytes.as_slice()))
         .collect();
+    for (archive_index, rel_path, bytes) in &ai_overrides {
+        overrides.push((&archives[*archive_index], rel_path.as_str(), bytes.as_slice()));
+    }
     blam_tags::iostore::writer::write_mod_container_ex(&overrides, &[], output)
         .with_context(|| format!("could not write {}", output.display()))?;
     report.lines.push(format!(
-        "Wrote {} edited scenario(s) to {}",
+        "Wrote {} edited scenario(s) + {} superior AI character(s) to {}",
         edited.len(),
+        ai_overrides.len(),
         output.display()
     ));
     Ok(report)
@@ -477,6 +546,19 @@ fn character_priority(path: &str) -> i32 {
         }
     };
     base
+}
+
+fn find_first_ubulk(archives: &[IoStoreArchive], file_suffix: &str) -> Option<(usize, String)> {
+    let suffix = file_suffix.replace('\\', "/").to_ascii_lowercase();
+    for (index, archive) in archives.iter().enumerate() {
+        for entry in archive.ublock_entries() {
+            let normalized = entry.path.replace('\\', "/").to_ascii_lowercase();
+            if normalized.ends_with(&suffix) {
+                return Some((index, entry.path.clone()));
+            }
+        }
+    }
+    None
 }
 
 fn collect_tag_paths(archives: &[IoStoreArchive], group_name: &str) -> Result<BTreeSet<String>> {

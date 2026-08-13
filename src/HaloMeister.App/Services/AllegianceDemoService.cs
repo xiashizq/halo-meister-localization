@@ -17,10 +17,11 @@ public sealed record ObjectTeamResult(
 
 /// <summary>
 /// Friend/foe demo: prefer a matching scaffold squad, birth as player (1) or
-/// covenant (3). Friendlies register as a player fireteam companion and follow;
-/// hostiles do not. Optional post reinforce via <c>ai_object_set_team</c> +
-/// the object allegiance table. Spawned squads are re-pulsed into combat so
-/// they stay engaged instead of drifting back to idle/follow.
+/// covenant (3). Friendlies on the dedicated <c>hm_ally</c> scaffold join the
+/// player fireteam and follow; borrowed mission squads stay on the player team
+/// but do not. Hostiles do not follow. Optional post reinforce via
+/// <c>ai_object_set_team</c> + the object allegiance table. Spawned squads get
+/// a one-shot combat wake; they are not re-pulsed into berserk afterwards.
 /// </summary>
 public sealed class AllegianceDemoService
 {
@@ -28,29 +29,87 @@ public sealed class AllegianceDemoService
         @"first actor datum 0x([0-9A-Fa-f]{8})",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly Regex ActorDatumsListPattern = new(
+        @"actor datums\s+((?:0x[0-9A-Fa-f]{8}\s*,?\s*)+)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private readonly ScriptingBridgeService _bridge =
         ScriptingBridgeService.Current;
     private readonly EnemySpawnerService _spawner = new();
     private readonly object _combatLock = new();
-    private readonly Dictionary<string, bool> _combatSquads =
-        new(StringComparer.OrdinalIgnoreCase);
-    private int _maintainBusy;
-    private Timer? _maintainTimer;
+    private readonly List<TrackedBot> _trackedBots = [];
+    private AllegianceBotRecallSettings _recallSettings =
+        AllegianceBotRecallSettings.Load();
+
+    private readonly record struct TrackedBot(int ActorDatum, bool Friendly);
+    private readonly record struct WorldPoint(float X, float Y, float Z);
+
+    public sealed record BotRecallResult(
+        int Considered,
+        int Teleported,
+        int Failed);
 
     public ScriptingBridgeStatus BridgeStatus => _bridge.GetStatus();
 
-    public bool HasCombatMaintainTargets
+    public int TrackedBotCount
     {
         get
         {
             lock (_combatLock)
-                return _combatSquads.Count > 0;
+                return _trackedBots.Count;
+        }
+    }
+
+    public AllegianceBotRecallSettings RecallSettings
+    {
+        get
+        {
+            lock (_combatLock)
+                return AllegianceBotRecallSettings.Clamp(_recallSettings);
         }
     }
 
     /// <summary>Friendly = player (1). Hostile = covenant (3).</summary>
     public const int FriendlyTeam = 1;
     public const int HostileTeam = 3;
+
+    public void ApplyRecallSettings(AllegianceBotRecallSettings settings)
+    {
+        AllegianceBotRecallSettings clamped =
+            AllegianceBotRecallSettings.Clamp(settings);
+        clamped.Save();
+        lock (_combatLock)
+            _recallSettings = clamped;
+    }
+
+    /// <summary>
+    /// True when a forced recall can run (tracked bots exist for the
+    /// current include-hostiles setting).
+    /// </summary>
+    public bool HasRecallTargets
+    {
+        get
+        {
+            AllegianceBotRecallSettings settings = RecallSettings;
+            lock (_combatLock)
+            {
+                return _trackedBots.Any(
+                    bot => bot.Friendly || settings.IncludeHostiles);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Halo 10-foot units along the player's right (negative = left).
+    /// Extra spawn batches stay beside the player instead of metres ahead.
+    /// </summary>
+    public static (float Right, float Forward) BotFormationOffset(int slot)
+    {
+        if (slot <= 0)
+            return (0f, 0f);
+        float distance = ((slot + 1) / 2) * 0.9f;
+        return slot % 2 == 1 ? (-distance, 0f) : (distance, 0f);
+    }
 
     public static IReadOnlyList<PlayerTeamOption> CreateTeamOptions() =>
     [
@@ -91,10 +150,10 @@ public sealed class AllegianceDemoService
         if (count is < 1 or > 5)
             throw new ArgumentOutOfRangeException(nameof(count));
 
-        // Friendly prefers an ally scaffold and registers as a player fireteam
-        // companion so they follow. Hostile prefers a hostile scaffold and does
-        // not join the player's fireteam. Native keeps squad team patched
-        // through actor_new + finalize.
+        // Friendly prefers an ally scaffold. Only dedicated hm_ally joins the
+        // player fireteam so they follow; borrowed mission squads do not.
+        // Hostile prefers a hostile scaffold and does not join the fireteam.
+        // Native keeps squad team patched through actor_new + finalize.
         //
         // Keep initial objective/task for both stances so actor_new inherits
         // attack desire. Dedicated hm_* always keep combat objective.
@@ -110,157 +169,123 @@ public sealed class AllegianceDemoService
             clearSquadObjective: false,
             campaignTeam: (ushort)campaignTeam,
             cancellationToken: cancellationToken);
-        int? actor = TryParseActorDatum(result.Message);
+        IReadOnlyList<int> actors = ParseActorDatums(result.Message);
+        int? actor = actors.Count > 0
+            ? actors[0]
+            : TryParseActorDatum(result.Message);
+        if (actors.Count == 0 && actor is int loneActor)
+            actors = [loneActor];
         SpawnScaffoldDiagnosis? diagnosis = _spawner.LastScaffoldDiagnosis;
         result = await WakeSpawnedSquadAsync(
             result,
             diagnosis,
             preserveFireteam: followPlayer,
             cancellationToken);
-        if (result.Outcome == ScriptOutcome.Confirmed)
+        // AI spawn reports Confirmed (including deferred "submitted" mapped in
+        // the bridge). Track bots whenever creation succeeded so recall works.
+        if (IsSpawnSuccess(result.Outcome))
         {
-            string squadName = !string.IsNullOrWhiteSpace(diagnosis?.SquadName)
-                ? diagnosis!.SquadName
-                : followPlayer
-                    ? EnemySpawnerService.DedicatedAllySquadName
-                    : EnemySpawnerService.DedicatedHostileSquadName;
-            TrackCombatSquad(squadName, preserveFireteam: followPlayer);
-            if (followPlayer)
-            {
-                result = result with
-                {
-                    Message = $"{result.Message} follow=fireteam combat=maintain",
-                };
-            }
-            else
-            {
-                result = result with
-                {
-                    Message = $"{result.Message} combat=maintain",
-                };
-            }
+            TrackSpawnedBots(actors, friendly: followPlayer);
         }
         return new AllegianceDemoSpawnResult(result, actor, diagnosis);
-    }
-
-    public void TrackCombatSquad(string squadName, bool preserveFireteam)
-    {
-        if (string.IsNullOrWhiteSpace(squadName))
-            return;
-        lock (_combatLock)
-            _combatSquads[squadName.Trim()] = preserveFireteam;
-        EnsureMaintainTimer();
     }
 
     public void ClearCombatMaintain()
     {
         lock (_combatLock)
-            _combatSquads.Clear();
-        Timer? timer = Interlocked.Exchange(ref _maintainTimer, null);
-        timer?.Dispose();
+            _trackedBots.Clear();
     }
 
-    private void EnsureMaintainTimer()
+    private void TrackSpawnedBots(IReadOnlyList<int> actors, bool friendly)
     {
-        if (_maintainTimer is not null)
+        if (actors.Count == 0)
             return;
-        // Pulse often enough that actors cannot cool back to idle/follow.
-        var timer = new Timer(
-            static state =>
-            {
-                if (state is not AllegianceDemoService service)
-                    return;
-                _ = service.MaintainCombatAsync();
-            },
-            this,
-            TimeSpan.FromMilliseconds(800),
-            TimeSpan.FromMilliseconds(1200));
-        if (Interlocked.CompareExchange(ref _maintainTimer, timer, null) is not null)
-            timer.Dispose();
-    }
-
-    /// <summary>
-    /// Re-assert force-active / combat status / berserk for every tracked
-    /// spawn squad. Safe to call from a UI timer; overlaps are skipped.
-    /// </summary>
-    public async Task MaintainCombatAsync(
-        CancellationToken cancellationToken = default)
-    {
-        if (Interlocked.Exchange(ref _maintainBusy, 1) == 1)
-            return;
-        try
+        lock (_combatLock)
         {
-            ScriptingBridgeStatus status = BridgeStatus;
-            if (!status.IsRuntimeReady || status.IsStale)
-                return;
-
-            List<KeyValuePair<string, bool>> squads;
-            lock (_combatLock)
-                squads = _combatSquads.ToList();
-            if (squads.Count == 0)
-                return;
-
-            foreach ((string squadName, bool preserveFireteam) in squads)
+            foreach (int actor in actors)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await PulseCombatAsync(
-                    squadName,
-                    preserveFireteam,
-                    cancellationToken);
+                if (_trackedBots.Any(bot => bot.ActorDatum == actor))
+                    continue;
+                _trackedBots.Add(new TrackedBot(actor, friendly));
             }
         }
-        catch (OperationCanceledException)
-        {
-            // Timer tick cancellation is fine.
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _maintainBusy, 0);
-        }
-    }
-
-    private async Task PulseCombatAsync(
-        string squadName,
-        bool preserveFireteam,
-        CancellationToken cancellationToken)
-    {
-        // Keep them in the hottest combat band. Friendlies skip ai_renew so
-        // fireteam membership survives the pulse.
-        var lines = new List<string>
-        {
-            $"ai_suppress_combat {squadName} false",
-            $"ai_force_active {squadName} true",
-            $"ai_set_weapon_up {squadName} true",
-            $"ai_berserk {squadName} true",
-        };
-        if (preserveFireteam)
-        {
-            lines.Add($"ai_prefer_target_team {squadName} covenant");
-            lines.Add($"ai_prefer_target_team {squadName} brute");
-            lines.Add($"ai_prefer_target_team {squadName} flood");
-        }
-        else
-        {
-            lines.Add($"ai_prefer_target (players) true");
-        }
-
-        await TryRunHaloScriptAsync(lines, cancellationToken);
-        // Status enum spelling differs by build — try both, ignore failures.
-        if (!await TryRunHaloScriptAsync(
-                [$"ai_set_combat_status {squadName} dangerous_enemy"],
-                cancellationToken))
-        {
-            await TryRunHaloScriptAsync(
-                [$"ai_set_combat_status {squadName} ai_combat_status_dangerous_enemy"],
-                cancellationToken);
-        }
     }
 
     /// <summary>
-    /// Best-effort combat wake. Hostiles renew + lock onto the player.
-    /// Friendlies skip <c>ai_renew</c> (keeps fireteam follow) but raise
-    /// combat status, weapon readiness, preferred hostile teams, and berserk
-    /// so they actually open fire instead of idle-following.
+    /// Manually teleport tracked BOTs near the player. Default scope is
+    /// friendlies; hostiles are included when the setting is on.
+    /// </summary>
+    public async Task<BotRecallResult> RecallBotsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        AllegianceBotRecallSettings settings = RecallSettings;
+
+        List<TrackedBot> candidates;
+        lock (_combatLock)
+        {
+            candidates = _trackedBots
+                .Where(bot => bot.Friendly || settings.IncludeHostiles)
+                .ToList();
+        }
+        if (candidates.Count == 0)
+            return new BotRecallResult(0, 0, 0);
+
+        EnsureObjectBridgeReady();
+
+        WorldPoint player = await ReadPlayerPositionAsync(cancellationToken);
+        int teleported = 0;
+        int failed = 0;
+        var dead = new List<int>();
+        int slot = 0;
+
+        foreach (TrackedBot bot in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                (float offsetX, float offsetY) = FormationOffset(slot++);
+                WorldPoint destination = new(
+                    player.X + offsetX,
+                    player.Y + offsetY,
+                    player.Z);
+                ScriptExecutionResult move = await TeleportObjectAsync(
+                    bot.ActorDatum,
+                    destination,
+                    cancellationToken);
+                if (IsSpawnSuccess(move.Outcome))
+                    teleported++;
+                else
+                {
+                    failed++;
+                    dead.Add(bot.ActorDatum);
+                }
+            }
+            catch
+            {
+                failed++;
+                dead.Add(bot.ActorDatum);
+            }
+        }
+
+        if (dead.Count > 0)
+        {
+            lock (_combatLock)
+            {
+                _trackedBots.RemoveAll(bot => dead.Contains(bot.ActorDatum));
+            }
+        }
+
+        return new BotRecallResult(candidates.Count, teleported, failed);
+    }
+
+    private static bool IsSpawnSuccess(ScriptOutcome outcome) =>
+        outcome is ScriptOutcome.Confirmed or ScriptOutcome.Submitted;
+
+    /// <summary>
+    /// One-shot combat wake after spawn. Hostiles renew and lock onto the
+    /// player. Friendlies skip <c>ai_renew</c> (keeps fireteam follow) but
+    /// raise combat status, weapon readiness, and preferred hostile teams.
+    /// Berserk is not forced.
     /// </summary>
     private async Task<ScriptExecutionResult> WakeSpawnedSquadAsync(
         ScriptExecutionResult spawnResult,
@@ -268,7 +293,7 @@ public sealed class AllegianceDemoService
         bool preserveFireteam,
         CancellationToken cancellationToken)
     {
-        if (spawnResult.Outcome != ScriptOutcome.Confirmed)
+        if (!IsSpawnSuccess(spawnResult.Outcome))
             return spawnResult;
 
         string fallback = preserveFireteam
@@ -322,13 +347,6 @@ public sealed class AllegianceDemoService
             {
                 wakeTags.Add("see");
             }
-
-            if (await TryRunHaloScriptAsync(
-                    [$"ai_berserk {squadName} true"],
-                    cancellationToken))
-            {
-                wakeTags.Add("berserk");
-            }
         }
         else
         {
@@ -345,13 +363,10 @@ public sealed class AllegianceDemoService
             }
 
             if (await TryRunHaloScriptAsync(
-                    [
-                        $"ai_prefer_target (players) true",
-                        $"ai_berserk {squadName} true",
-                    ],
+                    [$"ai_prefer_target (players) true"],
                     cancellationToken))
             {
-                wakeTags.Add("berserk");
+                wakeTags.Add("hunt");
             }
         }
 
@@ -448,6 +463,109 @@ public sealed class AllegianceDemoService
             _ => throw new ArgumentOutOfRangeException(nameof(team)),
         };
 
+    private async Task<WorldPoint> ReadPlayerPositionAsync(
+        CancellationToken cancellationToken)
+    {
+        ScriptExecutionResult result = await _bridge.ExecuteAsync(
+            ScriptLanguage.PlayerPosition,
+            "current",
+            TimeSpan.FromSeconds(8),
+            cancellationToken);
+        if (result.Outcome != ScriptOutcome.Confirmed)
+            throw new InvalidOperationException(result.Message);
+        if (!TryParseReturnPosition(result.Message, out WorldPoint point))
+        {
+            throw new InvalidDataException(
+                "The game returned an invalid player position.");
+        }
+        return point;
+    }
+
+    private async Task<ScriptExecutionResult> TeleportObjectAsync(
+        int actorDatum,
+        WorldPoint destination,
+        CancellationToken cancellationToken)
+    {
+        string payload = string.Create(
+            CultureInfo.InvariantCulture,
+            $"a{(uint)actorDatum:X8},{destination.X:G9},{destination.Y:G9},{destination.Z:G9}");
+        return await _bridge.ExecuteAsync(
+            ScriptLanguage.ObjectTeleport,
+            payload,
+            TimeSpan.FromSeconds(12),
+            cancellationToken);
+    }
+
+    private static bool TryParseReturnPosition(string message, out WorldPoint point)
+    {
+        point = default;
+        const string marker = "Return value: ";
+        int markerOffset = message.IndexOf(marker, StringComparison.Ordinal);
+        if (markerOffset < 0)
+            return false;
+        string rest = message[(markerOffset + marker.Length)..];
+        int paren = rest.IndexOf('(');
+        if (paren >= 0)
+            rest = rest[..paren];
+        string[] values = rest
+            .Trim()
+            .TrimEnd('.')
+            .Split(',', StringSplitOptions.TrimEntries);
+        if (values.Length < 3 ||
+            !float.TryParse(
+                values[0],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out float x) ||
+            !float.TryParse(
+                values[1],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out float y) ||
+            !float.TryParse(
+                values[2],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out float z))
+        {
+            return false;
+        }
+
+        point = new WorldPoint(x, y, z);
+        return true;
+    }
+
+    private static (float X, float Y) FormationOffset(int slot) =>
+        BotFormationOffset(slot);
+
+    private static IReadOnlyList<int> ParseActorDatums(string message)
+    {
+        Match list = ActorDatumsListPattern.Match(message);
+        if (list.Success)
+        {
+            var parsed = new List<int>();
+            foreach (Match hex in Regex.Matches(
+                         list.Groups[1].Value,
+                         @"0x([0-9A-Fa-f]{8})",
+                         RegexOptions.CultureInvariant))
+            {
+                if (uint.TryParse(
+                        hex.Groups[1].Value,
+                        NumberStyles.HexNumber,
+                        CultureInfo.InvariantCulture,
+                        out uint datum))
+                {
+                    parsed.Add(unchecked((int)datum));
+                }
+            }
+            if (parsed.Count > 0)
+                return parsed;
+        }
+
+        int? first = TryParseActorDatum(message);
+        return first is int actor ? [actor] : [];
+    }
+
     private static int? TryParseActorDatum(string message)
     {
         Match match = ActorDatumPattern.Match(message);
@@ -516,10 +634,27 @@ public sealed class AllegianceDemoService
         }
         if (status.IsStale)
             throw new InvalidOperationException(status.Summary);
-        if (status.RunningVersion is < 102)
+        if (status.RunningVersion is < 107)
         {
             throw new InvalidOperationException(
                 L.Get("allegiance_demo.requires_bridge_v102"));
+        }
+    }
+
+    private void EnsureObjectBridgeReady()
+    {
+        ScriptingBridgeStatus status = BridgeStatus;
+        if (!status.IsRuntimeReady)
+        {
+            throw new InvalidOperationException(
+                L.Get("bridge.error_not_responding_restart"));
+        }
+        if (status.IsStale)
+            throw new InvalidOperationException(status.Summary);
+        if (status.RunningVersion is < 106)
+        {
+            throw new InvalidOperationException(
+                L.Get("allegiance_demo.requires_bridge_v106"));
         }
     }
 }

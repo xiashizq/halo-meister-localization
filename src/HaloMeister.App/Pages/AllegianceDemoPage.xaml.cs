@@ -1,21 +1,31 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using HaloMeister.App.Localization;
 using HaloMeister.App.Models;
 using HaloMeister.App.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Windows.System;
 
 namespace HaloMeister.App.Pages;
 
 public sealed partial class AllegianceDemoPage : Page, IActivatablePage
 {
+    private const string GameProcessName = "HaloCampaignEvolved";
+
     private readonly RuntimeTagMemoryService _game = RuntimeTagMemoryService.Current;
     private readonly AllegianceDemoService _demo = new();
     private readonly FullPalettesOverlayService _builtinMod = new();
     private readonly DispatcherTimer _statusTimer = new()
     {
         Interval = TimeSpan.FromSeconds(2),
+    };
+    private readonly DispatcherTimer _hotkeyTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(50),
     };
     private readonly ObservableCollection<AllegianceSquadItem> _squad = [];
     private readonly IReadOnlyList<PlayerTeamOption> _teamOptions =
@@ -25,6 +35,12 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
     private int? _lastActorDatum;
     private int _lastApplyTeam = AllegianceDemoService.FriendlyTeam;
     private bool _busy;
+    private bool _hotkeyWasDown;
+    private bool _suppressHotkey;
+    private bool _modNeedsUpdate;
+    private int _modSyncBusy;
+    private int[] _gamePids = [];
+    private long _gamePidsExpiresTick;
 
     public AllegianceDemoPage()
     {
@@ -36,6 +52,7 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
         SquadList.ItemsSource = _squad;
         _game.ConnectionChanged += OnConnectionChanged;
         _statusTimer.Tick += OnStatusTick;
+        _hotkeyTimer.Tick += OnHotkeyTick;
         UpdateControls();
     }
 
@@ -43,12 +60,40 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
     {
         UpdateControls();
         _statusTimer.Start();
+        _hotkeyTimer.Start();
+        _ = RefreshBuiltinModSyncAsync();
     }
 
-    public void OnDeactivated() => _statusTimer.Stop();
+    public void OnDeactivated()
+    {
+        _statusTimer.Stop();
+        _hotkeyTimer.Stop();
+        _hotkeyWasDown = false;
+    }
 
     private void OnOpenBuiltinMod(object sender, RoutedEventArgs e) =>
         MainWindow.Instance?.NavigateTo("builtin-mod");
+
+    private async Task RefreshBuiltinModSyncAsync()
+    {
+        if (Interlocked.Exchange(ref _modSyncBusy, 1) == 1)
+            return;
+        try
+        {
+            BuiltinModSyncStatus sync = await Task.Run(_builtinMod.GetSyncStatus);
+            // Only prompt when the app bundle is intact and game files differ.
+            _modNeedsUpdate = sync.NeedsUpdatePrompt;
+            DispatcherQueue.TryEnqueue(UpdateControls);
+        }
+        catch
+        {
+            _modNeedsUpdate = false;
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _modSyncBusy, 0);
+        }
+    }
 
     private async void OnScan(object sender, RoutedEventArgs e)
     {
@@ -166,6 +211,190 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
         UpdateControls();
     }
 
+    private async void OnRecallBots(object sender, RoutedEventArgs e) =>
+        await RecallBotsFromUiAsync();
+
+    private async Task RecallBotsFromUiAsync()
+    {
+        if (!EnsureBuiltinMod()) return;
+        await RunBusy(async () =>
+        {
+            AllegianceDemoService.BotRecallResult result =
+                await _demo.RecallBotsAsync();
+            if (result.Considered == 0)
+            {
+                ShowStatus(
+                    L.Get("allegiance_demo.recall_none"),
+                    InfoBarSeverity.Warning);
+                return;
+            }
+
+            ShowStatus(
+                L.Format(
+                    "allegiance_demo.recall_done",
+                    result.Teleported,
+                    result.Considered,
+                    result.Failed),
+                result.Teleported > 0
+                    ? InfoBarSeverity.Success
+                    : InfoBarSeverity.Warning);
+        });
+    }
+
+    private async void OnRecallSettings(object sender, RoutedEventArgs e)
+    {
+        AllegianceBotRecallSettings current = _demo.RecallSettings;
+        int pendingHotkey = current.HotkeyVirtualKey;
+
+        var hostileToggle = new ToggleSwitch
+        {
+            Header = L.Get("allegiance_demo.recall_include_hostiles"),
+            OnContent = L.Get("allegiance_demo.recall_hostiles_on"),
+            OffContent = L.Get("allegiance_demo.recall_hostiles_off"),
+            IsOn = current.IncludeHostiles,
+        };
+        var hotkeyToggle = new ToggleSwitch
+        {
+            Header = L.Get("allegiance_demo.recall_hotkey_enabled"),
+            OnContent = L.Get("allegiance_demo.recall_hotkey_on"),
+            OffContent = L.Get("allegiance_demo.recall_hotkey_off"),
+            IsOn = current.HotkeyEnabled,
+        };
+        var hotkeyBox = new TextBox
+        {
+            Header = L.Get("allegiance_demo.recall_hotkey"),
+            PlaceholderText = L.Get("allegiance_demo.recall_hotkey_press"),
+            Text = AllegianceBotRecallSettings.FormatHotkey(pendingHotkey),
+            IsReadOnly = true,
+        };
+        hotkeyBox.KeyDown += (_, args) =>
+        {
+            if (args.Key is VirtualKey.Escape or VirtualKey.Enter or
+                VirtualKey.Tab or VirtualKey.Control or VirtualKey.Shift or
+                VirtualKey.Menu or VirtualKey.LeftWindows or
+                VirtualKey.RightWindows or VirtualKey.CapitalLock)
+            {
+                return;
+            }
+
+            pendingHotkey = (int)args.Key;
+            hotkeyBox.Text = AllegianceBotRecallSettings.FormatHotkey(pendingHotkey);
+            args.Handled = true;
+        };
+        var hint = new TextBlock
+        {
+            Text = L.Get("allegiance_demo.recall_settings_hint"),
+            TextWrapping = TextWrapping.WrapWholeWords,
+            Opacity = 0.72,
+            FontSize = 12,
+        };
+
+        var panel = new StackPanel { Spacing = 14, MinWidth = 320 };
+        panel.Children.Add(hint);
+        panel.Children.Add(hostileToggle);
+        panel.Children.Add(hotkeyToggle);
+        panel.Children.Add(hotkeyBox);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = L.Get("allegiance_demo.recall_settings_title"),
+            Content = panel,
+            PrimaryButtonText = L.Get("common.done"),
+            CloseButtonText = L.Get("common.cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+
+        _suppressHotkey = true;
+        try
+        {
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                return;
+        }
+        finally
+        {
+            _suppressHotkey = false;
+            _hotkeyWasDown = false;
+        }
+
+        _demo.ApplyRecallSettings(new AllegianceBotRecallSettings
+        {
+            IncludeHostiles = hostileToggle.IsOn,
+            HotkeyEnabled = hotkeyToggle.IsOn,
+            HotkeyVirtualKey = pendingHotkey,
+        });
+        ShowStatus(
+            L.Get("allegiance_demo.recall_settings_saved"),
+            InfoBarSeverity.Success);
+        UpdateControls();
+    }
+
+    private void OnHotkeyTick(object? sender, object e)
+    {
+        if (_suppressHotkey || _busy)
+        {
+            _hotkeyWasDown = false;
+            return;
+        }
+
+        AllegianceBotRecallSettings settings = _demo.RecallSettings;
+        if (!settings.HotkeyEnabled)
+        {
+            _hotkeyWasDown = false;
+            return;
+        }
+
+        bool down = (GetAsyncKeyState(settings.HotkeyVirtualKey) & 0x8000) != 0;
+        bool pressed = down && !_hotkeyWasDown;
+        _hotkeyWasDown = down;
+        if (!pressed || !IsGameForeground())
+            return;
+        if (!_demo.HasRecallTargets || !_demo.BridgeStatus.IsRuntimeReady)
+            return;
+        if (!_builtinMod.IsInstalled())
+            return;
+
+        _ = RecallBotsFromUiAsync();
+    }
+
+    private bool IsGameForeground()
+    {
+        nint hwnd = GetForegroundWindow();
+        if (hwnd == 0)
+            return false;
+        _ = GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == 0)
+            return false;
+
+        long now = Environment.TickCount64;
+        if (now >= _gamePidsExpiresTick)
+        {
+            try
+            {
+                Process[] processes = Process.GetProcessesByName(GameProcessName);
+                _gamePids = processes.Select(process => process.Id).ToArray();
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
+            catch
+            {
+                _gamePids = [];
+            }
+            _gamePidsExpiresTick = now + 2000;
+        }
+
+        return _gamePids.Contains((int)pid);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
+
     private async void OnSpawnSquad(object sender, RoutedEventArgs e)
     {
         if (_squad.Count == 0 || !EnsureBuiltinMod()) return;
@@ -212,8 +441,15 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
             LastActorText.Text = _lastActorDatum is not null
                 ? L.Format("allegiance_demo.last_actor", created)
                 : L.Get("allegiance_demo.last_actor_unknown");
+            string status = L.Format("allegiance_demo.spawned_squad", created);
+            if (_demo.TrackedBotCount > 0)
+            {
+                status += " " + L.Format(
+                    "allegiance_demo.recall_tracked",
+                    _demo.TrackedBotCount);
+            }
             ShowStatus(
-                L.Format("allegiance_demo.spawned_squad", created),
+                status,
                 anyHostileFallback ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
         });
     }
@@ -243,13 +479,7 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
     }
 
     private static (float X, float Y) FormationOffset(int batchIndex) =>
-        batchIndex switch
-        {
-            0 => (0, 0),
-            _ when batchIndex % 2 == 1 =>
-                (-3.2f * ((batchIndex + 1) / 2), -2.0f),
-            _ => (3.2f * (batchIndex / 2), -2.0f),
-        };
+        AllegianceDemoService.BotFormationOffset(batchIndex);
 
     private async Task RunBusy(Func<Task> action)
     {
@@ -289,7 +519,24 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
         bool connected = _game.IsConnected;
         bool ready = bridge.IsRuntimeReady;
         bool modReady = _builtinMod.IsInstalled();
-        ModRequiredBanner.IsOpen = !modReady;
+        if (!modReady)
+        {
+            ModRequiredBanner.Title = L.Get("allegiance_demo.mod_required_title");
+            ModRequiredBanner.Message = L.Get("allegiance_demo.mod_required_body");
+            ModRequiredBanner.Severity = InfoBarSeverity.Warning;
+            ModRequiredBanner.IsOpen = true;
+        }
+        else if (_modNeedsUpdate)
+        {
+            ModRequiredBanner.Title = L.Get("allegiance_demo.mod_update_title");
+            ModRequiredBanner.Message = L.Get("allegiance_demo.mod_update_body");
+            ModRequiredBanner.Severity = InfoBarSeverity.Warning;
+            ModRequiredBanner.IsOpen = true;
+        }
+        else
+        {
+            ModRequiredBanner.IsOpen = false;
+        }
         bool workspaceActive = !_busy && modReady;
         WorkspacePanel.IsHitTestVisible = workspaceActive;
         WorkspacePanel.Opacity = workspaceActive ? 1 : 0.45;
@@ -310,6 +557,18 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
         SpawnSquadButton.IsEnabled =
             !_busy && connected && ready && modReady && !empty;
         ClearSquadButton.IsEnabled = !_busy && modReady && !empty;
+        RecallSettingsButton.IsEnabled = !_busy && modReady;
+        AllegianceBotRecallSettings recall = _demo.RecallSettings;
+        RecallButton.IsEnabled =
+            !_busy && connected && ready && modReady && _demo.HasRecallTargets;
+        RecallButton.Content = recall.HotkeyEnabled
+            ? L.Format("allegiance_demo.recall_with_hotkey", recall.HotkeyLabel)
+            : L.Get("allegiance_demo.recall");
+        ToolTipService.SetToolTip(
+            RecallButton,
+            recall.HotkeyEnabled
+                ? L.Format("allegiance_demo.recall_tooltip_hotkey", recall.HotkeyLabel)
+                : L.Get("allegiance_demo.recall_tooltip"));
         ApplyTeamButton.IsEnabled =
             !_busy && ready && modReady && ApplyTeamComboBox.SelectedItem is PlayerTeamOption;
 

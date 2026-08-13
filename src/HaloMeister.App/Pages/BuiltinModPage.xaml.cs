@@ -9,12 +9,14 @@ public sealed partial class BuiltinModPage : Page, IActivatablePage
 {
     private readonly FullPalettesOverlayService _mod = new();
     private bool _busy;
+    private BuiltinModSyncStatus? _sync;
 
     public BuiltinModPage() => InitializeComponent();
 
-    public void OnActivated() => RefreshStatus();
+    public void OnActivated() => _ = RefreshStatusAsync();
 
-    private void OnRefresh(object sender, RoutedEventArgs e) => RefreshStatus();
+    private void OnRefresh(object sender, RoutedEventArgs e) =>
+        _ = RefreshStatusAsync();
 
     private async void OnInstall(object sender, RoutedEventArgs e)
     {
@@ -28,12 +30,20 @@ public sealed partial class BuiltinModPage : Page, IActivatablePage
                 return;
             }
 
+            bool update = _sync?.State is
+                BuiltinModSyncState.Outdated or BuiltinModSyncState.Incomplete;
             var confirm = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = L.Get("builtin_mod.install"),
-                Content = L.Get("builtin_mod.install_confirm"),
-                PrimaryButtonText = L.Get("builtin_mod.install"),
+                Title = update
+                    ? L.Get("builtin_mod.update")
+                    : L.Get("builtin_mod.install"),
+                Content = update
+                    ? L.Get("builtin_mod.update_confirm")
+                    : L.Get("builtin_mod.install_confirm"),
+                PrimaryButtonText = update
+                    ? L.Get("builtin_mod.update")
+                    : L.Get("builtin_mod.install"),
                 CloseButtonText = L.Get("common.cancel"),
                 DefaultButton = ContentDialogButton.Close,
             };
@@ -41,7 +51,7 @@ public sealed partial class BuiltinModPage : Page, IActivatablePage
                 return;
 
             FullPalettesOverlayResult result = await Task.Run(_mod.Install);
-            RefreshStatus();
+            await RefreshStatusAsync();
             ShowStatus(result.Message, InfoBarSeverity.Success);
         });
     }
@@ -71,39 +81,55 @@ public sealed partial class BuiltinModPage : Page, IActivatablePage
                 return;
 
             FullPalettesOverlayResult result = await Task.Run(_mod.Remove);
-            RefreshStatus();
+            await RefreshStatusAsync();
             ShowStatus(result.Message, InfoBarSeverity.Success);
         });
     }
 
-    public void RefreshStatus()
+    private async Task RefreshStatusAsync()
     {
-        bool bundled = _mod.IsBundledAvailable();
-        bool installed = false;
-        int present = 0;
-        int total = FullPalettesOverlayService.RequiredFileNames.Count;
+        BusyRing.IsActive = true;
+        RefreshButton.IsEnabled = false;
         try
         {
-            installed = _mod.IsInstalled();
-            present = _mod.GetInstalledFileStatus().Count(file => file.Present);
+            BuiltinModSyncStatus sync = await Task.Run(_mod.GetSyncStatus);
+            _sync = sync;
+            ApplySyncStatus(sync);
         }
-        catch (DirectoryNotFoundException)
+        catch (Exception ex)
         {
-            // Keep UI usable; install will surface the same error.
+            StatusText.Text = ex.Message;
+            InstallButton.IsEnabled = false;
+            RemoveButton.IsEnabled = false;
         }
+        finally
+        {
+            BusyRing.IsActive = _busy;
+            RefreshButton.IsEnabled = !_busy;
+        }
+    }
 
-        StatusText.Text = !bundled
-            ? L.Get("builtin_mod.bundle_missing")
-            : installed
-                ? L.Get("builtin_mod.status_ready")
-                : present == 0
-                    ? L.Get("builtin_mod.status_not_installed")
-                    : L.Format("builtin_mod.status_incomplete", present, total);
-
-        InstallButton.IsEnabled = !_busy && bundled && !installed;
-        RemoveButton.IsEnabled = !_busy && present > 0;
+    private void ApplySyncStatus(BuiltinModSyncStatus sync)
+    {
+        StatusText.Text = sync.Message;
+        bool update = sync.State is
+            BuiltinModSyncState.Outdated or BuiltinModSyncState.Incomplete;
+        InstallButton.Content = update
+            ? L.Get("builtin_mod.update")
+            : L.Get("builtin_mod.install");
+        InstallButton.IsEnabled = !_busy && sync.CanInstall;
+        RemoveButton.IsEnabled = !_busy && sync.CanRemove;
         RefreshButton.IsEnabled = !_busy;
         RestartBanner.IsOpen = true;
+
+        if (sync.NeedsUpdatePrompt)
+        {
+            ShowStatus(sync.Message, InfoBarSeverity.Warning);
+        }
+        else if (sync.State == BuiltinModSyncState.BundleTampered)
+        {
+            ShowStatus(sync.Message, InfoBarSeverity.Error);
+        }
     }
 
     private async Task RunBusy(Func<Task> action)
@@ -121,13 +147,16 @@ public sealed partial class BuiltinModPage : Page, IActivatablePage
         catch (Exception ex)
         {
             ShowStatus(ex.Message, InfoBarSeverity.Error);
-            RefreshStatus();
+            await RefreshStatusAsync();
         }
         finally
         {
             _busy = false;
             BusyRing.IsActive = false;
-            RefreshStatus();
+            if (_sync is BuiltinModSyncStatus sync)
+                ApplySyncStatus(sync);
+            else
+                await RefreshStatusAsync();
         }
     }
 

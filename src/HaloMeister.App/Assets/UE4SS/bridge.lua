@@ -1,5 +1,5 @@
 -- HALOMEISTER SCRIPTING BRIDGE:BEGIN
--- HALOMEISTER SCRIPTING BRIDGE:VERSION 105
+-- HALOMEISTER SCRIPTING BRIDGE:VERSION 107
 do
     local hm_ok, hm_error = pcall(function()
         -- UE4SS can load a mod before its shared helper module becomes available.
@@ -14,7 +14,7 @@ do
         -- Keep in step with the VERSION marker above; Halo Meister compares the
         -- version reported here against the copy it ships so it can tell you when
         -- the game is still running a stale bridge.
-        local bridge_version = 105
+        local bridge_version = 107
         -- User scripts execute in a dedicated environment. Expose the UE4SS
         -- helper module there while retaining normal access to global UE4SS
         -- APIs and preserving the historical global assignment behavior.
@@ -885,6 +885,7 @@ do
 
         local function execute_blam_spawn(request_id, operation, payload)
             local formation_offset_x, formation_offset_y = 0.0, 0.0
+            local ai_right_x, ai_right_y = 1.0, 0.0
             local friendly_companion = false
             if operation == "ai" or operation == "ai_team" then
                 local base_payload, offset_x, offset_y, friendly =
@@ -967,6 +968,30 @@ do
                 and math.abs(teleport_x) < math.huge
                 and math.abs(teleport_y) < math.huge
                 and math.abs(teleport_z) < math.huge
+            local object_target, object_tx, object_ty, object_tz =
+                payload:match(
+                    "^(last),([%+%-]?[%d%.eE]+),([%+%-]?[%d%.eE]+),([%+%-]?[%d%.eE]+)$"
+                )
+            if not object_target then
+                object_target, object_tx, object_ty, object_tz =
+                    payload:match(
+                        "^([aAuU]%x%x%x%x%x%x%x%x),([%+%-]?[%d%.eE]+),([%+%-]?[%d%.eE]+),([%+%-]?[%d%.eE]+)$"
+                    )
+            end
+            object_tx = tonumber(object_tx)
+            object_ty = tonumber(object_ty)
+            object_tz = tonumber(object_tz)
+            local valid_object_teleport = operation == "object_teleport"
+                and object_target ~= nil
+                and object_tx ~= nil and object_ty ~= nil and object_tz ~= nil
+                and object_tx == object_tx and object_ty == object_ty
+                and object_tz == object_tz
+                and math.abs(object_tx) < math.huge
+                and math.abs(object_ty) < math.huge
+                and math.abs(object_tz) < math.huge
+            local valid_object_position = operation == "object_position"
+                and (payload == "last"
+                    or payload:match("^[aAuU]%x%x%x%x%x%x%x%x$"))
             local valid_noclip = operation == "player_noclip"
                 and payload:match("^[01]$")
             local valid_player_team = operation == "player_team"
@@ -1064,6 +1089,8 @@ do
                 and not valid_teleport and not valid_noclip
                 and not valid_player_team
                 and not valid_object_team
+                and not valid_object_position
+                and not valid_object_teleport
                 and not valid_player_input and not valid_native_machinima
                 and not valid_research_call
                 and not valid_ai and not valid_ai_team then
@@ -1089,7 +1116,9 @@ do
                         and operation ~= "boundary_disable"
                         and operation ~= "boundary_restore"
                         and operation ~= "player_input"
-                        and operation ~= "machinima" then
+                        and operation ~= "machinima"
+                        and operation ~= "object_position"
+                        and operation ~= "object_teleport" then
                         -- UEHelpers v3 calls this GetPlayer; newer revisions may expose
                         -- GetPlayerPawn. Support both because HCE packages v3.
                         local get_player = UEHelpers.GetPlayerPawn or UEHelpers.GetPlayer
@@ -1109,12 +1138,29 @@ do
 
                         -- Biped switching is collision-driven. Spawn at the controlled
                         -- player's exact location so the engine sees overlapping unit
-                        -- capsules on the next simulation update. Other spawn tools keep
-                        -- their safer forward distance.
-                        local distance = operation == "biped" and 0.0 or 150.0
+                        -- capsules on the next simulation update. AI companions spawn
+                        -- beside the player (left/right), not metres ahead.
+                        local distance = (operation == "biped"
+                            or operation == "ai"
+                            or operation == "ai_team") and 0.0 or 150.0
                         x = location.X + forward.X * distance
                         y = location.Y + forward.Y * distance
                         z = location.Z + forward.Z * distance
+                        if operation == "ai" or operation == "ai_team" then
+                            local right = pawn.GetActorRightVector
+                                and pawn:GetActorRightVector()
+                                or nil
+                            if not right then
+                                right = { X = -forward.Y, Y = forward.X, Z = 0 }
+                            end
+                            local right_hx, right_hy = right.X, -right.Y
+                            local length = math.sqrt(
+                                right_hx * right_hx + right_hy * right_hy)
+                            if length > 0.001 then
+                                ai_right_x = right_hx / length
+                                ai_right_y = right_hy / length
+                            end
+                        end
                     end
                     if operation == "object" or operation == "weapon"
                         or operation == "variant"
@@ -1259,16 +1305,23 @@ do
                             operation = "variant"
                         end
                     end
+                    if operation == "object_teleport" then
+                        x, y, z = object_tx, object_ty, object_tz
+                        payload = object_target
+                    elseif operation == "object_position" then
+                        -- payload already holds last|aXXXXXXXX|uXXXXXXXX
+                        x, y, z = 0.0, 0.0, 0.0
+                    end
                     if operation == "ai" or operation == "ai_team" then
                         -- Campaign Evolved's UE scene uses centimetres while the
                         -- simulation uses 10-foot world units, with the Y axis
-                        -- mirrored. Keep the forward offset in the same transform
-                        -- so native AI is created beside the controlled player.
+                        -- mirrored. Offset along the player's right so native AI
+                        -- is created beside the controlled player.
                         x = x / 304.8
                         y = -y / 304.8
                         z = z / 304.8
-                        x = x + formation_offset_x
-                        y = y + formation_offset_y
+                        x = x + ai_right_x * formation_offset_x
+                        y = y + ai_right_y * formation_offset_x
                     elseif operation == "weapon"
                         or operation == "biped"
                         or operation == "biped_body"
@@ -1281,12 +1334,17 @@ do
                         y = y / 100.0
                         z = z / 100.0
                     end
+                    local coord_lines = (operation == "ai" or operation == "ai_team")
+                        and string.format(
+                            "%.9g\n%.9g\n%.9g\n%.9g\n%.9g\n",
+                            x, y, z, ai_right_x, ai_right_y)
+                        or string.format("%.9g\n%.9g\n%.9g\n", x, y, z)
                     os.remove(native_result_path)
                     local wrote, write_error = write_atomic(
                         native_request_path,
                         "HMBLAM2\n" .. request_id .. "\n" .. operation .. "\n"
                             .. payload .. "\n"
-                            .. string.format("%.9g\n%.9g\n%.9g\n", x, y, z)
+                            .. coord_lines
                     )
                     if not wrote then
                         error("Could not write the native spawn request: " .. tostring(write_error))
@@ -1525,6 +1583,10 @@ do
                 execute_blam_spawn(request.id, "player_team", request.code)
             elseif request.kind == "object_team" then
                 execute_blam_spawn(request.id, "object_team", request.code)
+            elseif request.kind == "object_position" then
+                execute_blam_spawn(request.id, "object_position", request.code)
+            elseif request.kind == "object_teleport" then
+                execute_blam_spawn(request.id, "object_teleport", request.code)
             elseif request.kind == "player_input" then
                 execute_blam_spawn(request.id, "player_input", request.code)
             elseif request.kind == "player_weapon_normalize" then

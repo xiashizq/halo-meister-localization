@@ -164,6 +164,8 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <TextBlock
@@ -175,14 +177,28 @@
                                 Style="{StaticResource CompactSafetyTextStyle}" />
                         </StackPanel>
                         <Button
-                            x:Name="ClearSquadButton"
+                            x:Name="RecallSettingsButton"
                             Grid.Column="1"
+                            Click="OnRecallSettings"
+                            Content="{i18n:Loc Key='allegiance_demo.recall_settings'}"
+                            IsEnabled="False"
+                            ToolTipService.ToolTip="{i18n:Loc Key='allegiance_demo.recall_settings_tooltip'}" />
+                        <Button
+                            x:Name="RecallButton"
+                            Grid.Column="2"
+                            Click="OnRecallBots"
+                            Content="{i18n:Loc Key='allegiance_demo.recall'}"
+                            IsEnabled="False"
+                            ToolTipService.ToolTip="{i18n:Loc Key='allegiance_demo.recall_tooltip'}" />
+                        <Button
+                            x:Name="ClearSquadButton"
+                            Grid.Column="3"
                             Click="OnClearSquad"
                             Content="{i18n:Loc Key='allegiance_demo.clear_squad'}"
                             IsEnabled="False" />
                         <Button
                             x:Name="SpawnSquadButton"
-                            Grid.Column="2"
+                            Grid.Column="4"
                             MinWidth="132"
                             Click="OnSpawnSquad"
                             IsEnabled="False"

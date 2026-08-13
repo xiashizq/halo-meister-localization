@@ -15,15 +15,16 @@ spawner falls back to a hostile encounter squad.
 
 ## Bridge requirement
 
-Allegiance Demo needs bridge **v102** (restore scaffold team, then re-stamp the
-live unit team + allegiance). Install/repair the bridge and restart the game.
+Allegiance Demo needs bridge **v107** (AI spawn beside the player). Install/repair the bridge and restart the game.
 
 ## Built-in mod (MMYJ_FULL_VEHI_WAP_P)
 
 `hm_ally` / `hm_hostile` are baked into the same bundled overlay as Full
-Palettes vehicle/weapon expansions and a curated AI character-palette fill
+Palettes vehicle/weapon expansions, a curated AI character-palette fill
 (schema max 64; representatives first, then secondary variants to fill;
-drivers/pilots and broken helpers excluded): `MMYJ_FULL_VEHI_WAP_P.{utoc,ucas,pak}`
+drivers/pilots and broken helpers excluded), plus Superior Marines (`trooper.character`, retuned to press/melee and hide less)
+and Superior Covenant (elite/grunt/jackal/brute/hunter)
+AI overlays: `MMYJ_FULL_VEHI_WAP_P.{utoc,ucas,pak}`
 under `src/HaloMeister.App/Assets/Overlays/`.
 
 In the app: **Game files → Built-in mod** (also listed under Live tools → Spawn).
@@ -43,11 +44,28 @@ cd native\HaloMeister.TagModExporter
 .\expand-palettes.ps1 -Install -UpdateBundledAssets
 ```
 
-For all-hostile missions (no player/human squads), `hm_ally` is cloned from a
-combat-preferring hostile donor, then rewritten to team player while **keeping**
-the donor combat objective/task. Runtime spawn prefers those names and does not
-clear their objective.
+Validate every mission's dedicated scaffolds (BuildPlan-usable spawn points):
 
-After install, restart the game and Scan: expect `hm_ally≥1`. Friendly spawn
-should report `scaffold=dedicated:hm_ally` and join the player fireteam so the
-AI follows the player. Hostile spawn does not join the fireteam.
+```powershell
+$exe = ".\target\release\halomeister-tagmod-exporter.exe"
+$paks = "<game>\Meteorite\Content\Paks"
+& $exe --paks $paks --dump-demo-squads
+# Expect: VALIDATE scenarios=13 dedicated_failures=0
+```
+
+Donors must have at least one spawn point with a direct `character type` index
+or a resolvable `cell` (including cells under `designer` / `templated`). Spawn
+points that only have a position (`character type=-1`, `cell=-1`) are rejected —
+that is what made d40 report `dedicatedAlly=1` while still borrowing
+`sq_grunt_ee`. Existing dedicated squads with mixed usable/unusable points are
+repaired by stamping a resolved palette index onto every unusable point.
+
+For all-hostile missions (no player/human squads), `hm_ally` is cloned from a
+combat-preferring **usable** hostile donor, then rewritten to team player while
+**keeping** the donor combat objective/task. Runtime spawn prefers those names
+and does not clear their objective.
+
+After install, restart the game and Scan: expect usable `hm_ally≥1`. Friendly
+spawn should report `scaffold=dedicated:hm_ally` and `follow=hm_ally`. Only that
+dedicated scaffold joins the player fireteam. Borrowed mission squads stay on
+the player team but do not follow. Hostile spawn does not join the fireteam.

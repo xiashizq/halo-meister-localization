@@ -59,7 +59,8 @@ public static class LiveToolCapabilityCatalog
                 LiveToolCapability.RuntimeBoundaries,
             ScriptLanguage.PlayerTeleport or ScriptLanguage.PlayerNoClip or
                 ScriptLanguage.PlayerPosition or ScriptLanguage.PlayerInput or
-                ScriptLanguage.PlayerUnitTagRead =>
+                ScriptLanguage.PlayerUnitTagRead or
+                ScriptLanguage.ObjectPosition or ScriptLanguage.ObjectTeleport =>
                 LiveToolCapability.PlayerTools,
             ScriptLanguage.PlayerTeam or ScriptLanguage.ObjectTeam =>
                 LiveToolCapability.PlayerAllegiance,

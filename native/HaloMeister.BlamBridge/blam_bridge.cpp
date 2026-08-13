@@ -118,6 +118,8 @@ enum class SpawnKind
     player_noclip,
     player_team,
     object_team,
+    object_position,
+    object_teleport,
     player_input,
     machinima,
     ai,
@@ -217,6 +219,8 @@ struct SpawnRequest
     std::array<std::uint8_t, 4> actor_variant{};
     std::uint32_t ai_weapon_datum{UINT32_MAX};
     bool ai_follow_player{};
+    float ai_right_x{1.0f};
+    float ai_right_y{0.0f};
     std::uint32_t research_rva{};
     std::array<std::uint8_t, 16> research_prologue{};
     std::uint8_t research_argument_count{};
@@ -401,6 +405,8 @@ bool parse_request(
     std::string x;
     std::string y;
     std::string z;
+    std::string right_x;
+    std::string right_y;
     if (!std::getline(input, magic) ||
         !std::getline(input, request.id) ||
         !std::getline(input, operation) ||
@@ -411,6 +417,16 @@ bool parse_request(
     {
         error = "The native spawn request is incomplete.";
         return false;
+    }
+    if (std::getline(input, right_x) && std::getline(input, right_y))
+    {
+        char* right_end = nullptr;
+        request.ai_right_x = std::strtof(right_x.c_str(), &right_end);
+        if (!right_end || *right_end != '\0' || !std::isfinite(request.ai_right_x))
+            request.ai_right_x = 1.0f;
+        request.ai_right_y = std::strtof(right_y.c_str(), &right_end);
+        if (!right_end || *right_end != '\0' || !std::isfinite(request.ai_right_y))
+            request.ai_right_y = 0.0f;
     }
     if (magic != kRequestMagic ||
         request.id.size() != 32 ||
@@ -740,6 +756,47 @@ bool parse_request(
                 return false;
             }
             request.player_team = static_cast<std::int16_t>(team);
+        }
+    }
+    else if (operation == "object_position" ||
+             operation == "object_teleport")
+    {
+        // target — last | aXXXXXXXX | uXXXXXXXX
+        request.kind = operation == "object_position"
+            ? SpawnKind::object_position
+            : SpawnKind::object_teleport;
+        std::string target = payload;
+        if (target == "last")
+        {
+            request.cheat_name = "last";
+            request.unit_datum = -1;
+        }
+        else if ((target[0] == 'a' || target[0] == 'A' ||
+                  target[0] == 'u' || target[0] == 'U') &&
+                 target.size() == 9)
+        {
+            request.cheat_name =
+                (target[0] == 'u' || target[0] == 'U') ? "unit" : "actor";
+            std::uint32_t datum = 0;
+            auto datum_result = std::from_chars(
+                target.data() + 1,
+                target.data() + target.size(),
+                datum,
+                16);
+            if (datum_result.ec != std::errc{} ||
+                datum_result.ptr != target.data() + target.size() ||
+                datum == UINT32_MAX)
+            {
+                error = "The object target datum is invalid.";
+                return false;
+            }
+            request.unit_datum = static_cast<std::int32_t>(datum);
+        }
+        else
+        {
+            error =
+                "The object target must be last, a<actor>, or u<unit>.";
+            return false;
         }
     }
     else if (operation == "object_team")
@@ -1470,7 +1527,9 @@ bool validate_module(
               kObjectGetOrientationPrologue.size()) != 0)) ||
         ((kind == SpawnKind::player_position ||
           kind == SpawnKind::player_teleport ||
-          kind == SpawnKind::player_noclip) &&
+          kind == SpawnKind::player_noclip ||
+          kind == SpawnKind::object_position ||
+          kind == SpawnKind::object_teleport) &&
          (std::memcmp(
               module + kObjectGetPositionRva,
               kObjectGetPositionPrologue.data(),
@@ -1480,7 +1539,8 @@ bool validate_module(
               kObjectGetOrientationPrologue.data(),
               kObjectGetOrientationPrologue.size()) != 0)) ||
         ((kind == SpawnKind::player_teleport ||
-          kind == SpawnKind::player_noclip) &&
+          kind == SpawnKind::player_noclip ||
+          kind == SpawnKind::object_teleport) &&
          std::memcmp(
              module + kObjectTeleportRva,
              kObjectTeleportPrologue.data(),
@@ -3771,6 +3831,34 @@ std::string execute_research_call(const SpawnRequest& request)
     return message;
 }
 
+void fill_ai_side_position(
+    const SpawnRequest& request,
+    std::size_t index,
+    float position[3])
+{
+    static constexpr std::array<float, kMaxAiPlacements> kSideOffsets{
+        -0.55f, 0.55f, -1.05f, 1.05f, 0.0f};
+    if (index >= kSideOffsets.size())
+        index = kSideOffsets.size() - 1;
+    float right_x = request.ai_right_x;
+    float right_y = request.ai_right_y;
+    const float length = std::sqrt(right_x * right_x + right_y * right_y);
+    if (!(length > 0.001f) || !std::isfinite(length))
+    {
+        right_x = 1.0f;
+        right_y = 0.0f;
+    }
+    else
+    {
+        right_x /= length;
+        right_y /= length;
+    }
+    const float along = kSideOffsets[index];
+    position[0] = request.x + right_x * along;
+    position[1] = request.y + right_y * along;
+    position[2] = request.z;
+}
+
 DWORD invoke_ai_place(
     std::uint8_t* module,
     const SpawnRequest* request,
@@ -3800,14 +3888,6 @@ DWORD invoke_ai_place(
                 &request->ai_team_value,
                 sizeof(request->ai_team_value));
         }
-        constexpr std::array<std::array<float, 2>, kMaxAiPlacements>
-            formation_offsets{{
-                {{0.0f, 0.0f}},
-                {{-0.9f, -0.45f}},
-                {{0.9f, -0.45f}},
-                {{-1.8f, -0.9f}},
-                {{1.8f, -0.9f}},
-            }};
         for (std::size_t index = 0;
              index < request->ai_placement_count;
              ++index)
@@ -3833,11 +3913,8 @@ DWORD invoke_ai_place(
                     request->character_reference_addresses[index]),
                 request->character_reference.data(),
                 request->character_reference.size());
-            float position[3]{
-                request->x + formation_offsets[index][0],
-                request->y + formation_offsets[index][1],
-                request->z,
-            };
+            float position[3]{};
+            fill_ai_side_position(*request, index, position);
             std::memcpy(
                 reinterpret_cast<void*>(
                     request->spawn_position_addresses[index]),
@@ -3966,14 +4043,6 @@ DWORD invoke_actor_new_direct(
             return ERROR_NOT_FOUND;
         }
 
-        constexpr std::array<std::array<float, 2>, kMaxAiPlacements>
-            formation_offsets{{
-                {{0.0f, 0.0f}},
-                {{-0.9f, -0.45f}},
-                {{0.9f, -0.45f}},
-                {{-1.8f, -0.9f}},
-                {{1.8f, -0.9f}},
-            }};
         for (std::size_t index = 0;
              index < request->ai_placement_count;
              ++index)
@@ -3981,11 +4050,8 @@ DWORD invoke_actor_new_direct(
             alignas(16)
                 std::array<std::uint8_t, kActorStartingLocationSize> location =
                     built_locations.locations[0];
-            const float position[3]{
-                request->x + formation_offsets[index][0],
-                request->y + formation_offsets[index][1],
-                request->z,
-            };
+            float position[3]{};
+            fill_ai_side_position(*request, index, position);
             std::memcpy(location.data(), position, sizeof(position));
 
             std::memcpy(location.data() + kActorCharacterDatumOffset,
@@ -4472,6 +4538,219 @@ bool clear_actor_player_combat_targets(
         ++(*cleared_targets);
     }
     return true;
+}
+
+bool resolve_object_target_unit(
+    std::uint8_t* module,
+    const SpawnRequest& request,
+    std::int32_t* unit_datum,
+    std::int32_t* actor_datum,
+    std::string& error)
+{
+    *unit_datum = request.unit_datum;
+    *actor_datum = -1;
+    if (request.cheat_name == "last")
+    {
+        *actor_datum = g_last_ai_actor_datum;
+        if (*actor_datum == -1)
+        {
+            error =
+                "No AI actor has been created yet in this session. Spawn one first.";
+            return false;
+        }
+        const char* resolve_error = nullptr;
+        if (!resolve_actor_unit_datum(
+                module,
+                *actor_datum,
+                unit_datum,
+                &resolve_error))
+        {
+            error = resolve_error != nullptr
+                ? resolve_error
+                : "Could not resolve the last AI actor to a unit.";
+            return false;
+        }
+        return true;
+    }
+    if (request.cheat_name == "actor")
+    {
+        *actor_datum = request.unit_datum;
+        const char* resolve_error = nullptr;
+        if (!resolve_actor_unit_datum(
+                module,
+                *actor_datum,
+                unit_datum,
+                &resolve_error))
+        {
+            error = resolve_error != nullptr
+                ? resolve_error
+                : "Could not resolve the AI actor to a unit.";
+            return false;
+        }
+        return true;
+    }
+    if (request.cheat_name == "unit")
+        return true;
+    error = "The object target must be last, actor, or unit.";
+    return false;
+}
+
+std::string read_object_position(const SpawnRequest& request)
+{
+    auto* module = reinterpret_cast<std::uint8_t*>(
+        GetModuleHandleW(kSimulationModule));
+    if (!module)
+    {
+        throw std::runtime_error(
+            "HaloSimulation_tag_release.dll is not loaded. Load a campaign mission first.");
+    }
+    std::string validation_error;
+    if (!validate_module(module, validation_error, request.kind))
+    {
+        throw std::runtime_error(validation_error);
+    }
+
+    std::int32_t unit_datum = -1;
+    std::int32_t actor_datum = -1;
+    std::string resolve_error;
+    if (!resolve_object_target_unit(
+            module,
+            request,
+            &unit_datum,
+            &actor_datum,
+            resolve_error))
+    {
+        throw std::runtime_error(resolve_error);
+    }
+
+    float position[3]{};
+    float forward[3]{};
+    std::uintptr_t exception_address = 0;
+    DWORD exception_code = read_object_transform(
+        module,
+        unit_datum,
+        position,
+        forward,
+        &exception_address);
+    if (exception_code != 0 ||
+        !std::isfinite(position[0]) ||
+        !std::isfinite(position[1]) ||
+        !std::isfinite(position[2]))
+    {
+        throw std::runtime_error(
+            "Could not read the target object's native Blam position.");
+    }
+
+    char message[192]{};
+    std::snprintf(
+        message,
+        sizeof(message),
+        "Return value: %.6g, %.6g, %.6g (unit 0x%08X).",
+        position[0],
+        position[1],
+        position[2],
+        static_cast<std::uint32_t>(unit_datum));
+    return message;
+}
+
+std::string teleport_object(const SpawnRequest& request)
+{
+    auto* module = reinterpret_cast<std::uint8_t*>(
+        GetModuleHandleW(kSimulationModule));
+    if (!module)
+    {
+        throw std::runtime_error(
+            "HaloSimulation_tag_release.dll is not loaded. Load a campaign mission first.");
+    }
+    std::string validation_error;
+    if (!validate_module(module, validation_error, request.kind))
+    {
+        throw std::runtime_error(validation_error);
+    }
+
+    std::int32_t unit_datum = -1;
+    std::int32_t actor_datum = -1;
+    std::string resolve_error;
+    if (!resolve_object_target_unit(
+            module,
+            request,
+            &unit_datum,
+            &actor_datum,
+            resolve_error))
+    {
+        throw std::runtime_error(resolve_error);
+    }
+
+    float current_position[3]{};
+    float current_forward[3]{};
+    float current_up[3]{};
+    std::uintptr_t transform_exception = 0;
+    DWORD transform_error = read_object_transform(
+        module,
+        unit_datum,
+        current_position,
+        current_forward,
+        &transform_exception,
+        current_up);
+    if (transform_error != 0)
+    {
+        throw std::runtime_error(
+            "Could not resolve the target object's orientation before teleporting.");
+    }
+
+    float position[3]{request.x, request.y, request.z};
+    std::uintptr_t exception_address = 0;
+    DWORD exception_code = invoke_object_teleport(
+        module,
+        unit_datum,
+        position,
+        current_forward,
+        current_up,
+        &exception_address);
+    if (exception_code != 0)
+    {
+        char message[224]{};
+        std::snprintf(
+            message,
+            sizeof(message),
+            "Native object teleport raised Windows exception 0x%08X at "
+            "simulation RVA 0x%llX.",
+            static_cast<unsigned>(exception_code),
+            exception_address >= reinterpret_cast<std::uintptr_t>(module)
+                ? static_cast<unsigned long long>(
+                    exception_address - reinterpret_cast<std::uintptr_t>(module))
+                : 0ULL);
+        throw std::runtime_error(message);
+    }
+
+    float verified[3]{};
+    float forward[3]{};
+    transform_exception = 0;
+    transform_error = read_object_transform(
+        module,
+        unit_datum,
+        verified,
+        forward,
+        &transform_exception);
+    if (transform_error != 0 ||
+        std::fabs(verified[0] - request.x) > 0.35f ||
+        std::fabs(verified[1] - request.y) > 0.35f ||
+        std::fabs(verified[2] - request.z) > 0.35f)
+    {
+        throw std::runtime_error(
+            "The engine did not retain the requested object position.");
+    }
+
+    char message[192]{};
+    std::snprintf(
+        message,
+        sizeof(message),
+        "Teleported object 0x%08X to %.3f, %.3f, %.3f world units.",
+        static_cast<std::uint32_t>(unit_datum),
+        verified[0],
+        verified[1],
+        verified[2]);
+    return message;
 }
 
 std::string process_object_team(const SpawnRequest& request)
@@ -5032,17 +5311,34 @@ std::string spawn_ai(const SpawnRequest& request)
     g_deferred_ai_fireteam_done = false;
     g_deferred_ai_finalize_deadline = GetTickCount64() + 5000;
 
-    char message[160]{};
-    std::snprintf(
+    char message[320]{};
+    int written = std::snprintf(
         message,
         sizeof(message),
         "Created %u native AI actor(s) at %.2f, %.2f, %.2f "
-        "(first actor datum 0x%08X).",
+        "(first actor datum 0x%08X; actor datums",
         static_cast<unsigned>(request.ai_placement_count),
         request.x,
         request.y,
         request.z,
         static_cast<std::uint32_t>(created_actors[0]));
+    for (std::size_t index = 0;
+         index < request.ai_placement_count && written > 0 &&
+         static_cast<std::size_t>(written) + 12 < sizeof(message);
+         ++index)
+    {
+        written += std::snprintf(
+            message + written,
+            sizeof(message) - static_cast<std::size_t>(written),
+            "%s0x%08X",
+            index == 0 ? " " : ",",
+            static_cast<std::uint32_t>(created_actors[index]));
+    }
+    if (written > 0 && static_cast<std::size_t>(written) + 3 < sizeof(message))
+        std::snprintf(
+            message + written,
+            sizeof(message) - static_cast<std::size_t>(written),
+            ").");
     return message;
 }
 
@@ -5352,22 +5648,11 @@ std::int32_t hooked_actor_new(
         request->actor_variant.data(),
         sizeof(actor_variant));
 
-    constexpr std::array<std::array<float, 2>, kMaxAiPlacements>
-        formation_offsets{{
-            {{0.0f, 0.0f}},
-            {{-0.9f, -0.45f}},
-            {{0.9f, -0.45f}},
-            {{-1.8f, -0.9f}},
-            {{1.8f, -0.9f}},
-        }};
     const std::size_t actor_index = (std::min)(
         g_active_ai_actor_index++,
-        formation_offsets.size() - 1);
-    const float position[3]{
-        request->x + formation_offsets[actor_index][0],
-        request->y + formation_offsets[actor_index][1],
-        request->z,
-    };
+        kMaxAiPlacements - 1);
+    float position[3]{};
+    fill_ai_side_position(*request, actor_index, position);
     std::memcpy(overridden.data(), position, sizeof(position));
     std::memcpy(
         overridden.data() + kActorCharacterDatumOffset,
@@ -6036,6 +6321,22 @@ void* hooked_simulation_context()
                 g_pending_request.id,
                 "ok",
                 process_object_team(g_pending_request));
+        }
+        else if (g_pending_request.kind == SpawnKind::object_position)
+        {
+            write_result(
+                g_pending_result_path,
+                g_pending_request.id,
+                "ok",
+                read_object_position(g_pending_request));
+        }
+        else if (g_pending_request.kind == SpawnKind::object_teleport)
+        {
+            write_result(
+                g_pending_result_path,
+                g_pending_request.id,
+                "ok",
+                teleport_object(g_pending_request));
         }
         else if (g_pending_request.kind == SpawnKind::player_input)
         {

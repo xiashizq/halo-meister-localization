@@ -1,0 +1,9 @@
+Eridnus Superior Covenant v1.2
+Source overlay: Eridnus__Superior_Covenant_v1-2_P
+Tags:
+  objects/characters/elite/ai/elite.character
+  objects/characters/grunt/ai/grunt.character
+  objects/characters/jackal/ai/jackal.character
+  objects/characters/brute/ai/brute.character
+  objects/characters/hunter/ai/hunter.character
+Extracted as .ubulk payloads for MMYJ_FULL_VEHI_WAP_P.
