@@ -109,6 +109,21 @@ FUNCTION_PATTERNS = {
     "skullMaskApply": (
         "4C 8B DC 56 57 41 56 48 83 EC 50 8B 15 ?? ?? ??"
     ),
+    "hsArgumentsEvaluate": (
+        "48 8B C4 44 88 48 20 4C 89 40 18 66 89 50 10 53 56 57 41 56"
+    ),
+    "hsReturn": (
+        "40 53 55 56 57 41 56 48 83 EC 20 65 48 8B 04 25 58 00 00 00"
+    ),
+    "aiPlayerAddFireteamSquad": (
+        "89 54 24 10 48 83 EC 78 8B C2 45 0F B6 C8 48 0F"
+    ),
+    "aiObjectStateResolve": (
+        "40 53 55 56 57 41 54 41 56 41 57 48 83 EC 20 8B"
+    ),
+    "aiObjectSetTeam": (
+        "48 89 5C 24 10 89 4C 24 08 55 56 57 41 54 41 55"
+    ),
 }
 
 # A capability is never enabled merely because its build fingerprint matched.
@@ -118,7 +133,14 @@ CAPABILITY_REQUIREMENTS = {
     "ObjectSpawn": ["placementInitialize", "objectNew", "objectGetPosition", "objectGetOrientation"],
     "WeaponLoad": ["placementInitialize", "objectNew", "objectDelete", "unitAddWeapon"],
     "ObjectAppearance": ["objectSetVariant", "objectSetColors", "objectChanged"],
-    "AiPlacement": ["aiPlace", "actorNew", "actorStartingLocationsBuild"],
+    "AiPlacement": [
+        "aiPlace",
+        "actorNew",
+        "actorStartingLocationsBuild",
+        "hsArgumentsEvaluate",
+        "hsReturn",
+        "aiPlayerAddFireteamSquad",
+    ],
     "GameplayCheats": ["skullMaskApply"],
     "PlayerTools": [
         "objectGetPosition",
@@ -127,7 +149,11 @@ CAPABILITY_REQUIREMENTS = {
         "objectSetPhysics",
         "playerEnableInput",
     ],
-    "PlayerAllegiance": ["objectGet"],
+    "PlayerAllegiance": [
+        "objectGet",
+        "aiObjectStateResolve",
+        "aiObjectSetTeam",
+    ],
     "Machinima": ["machinimaCameraToggle"],
     "SavedFilm": ["savedFilmOpen", "commandPump"],
 }
@@ -137,12 +163,12 @@ CAPABILITY_REQUIREMENTS = {
 # be promoted without an explicit review of the remaining manual evidence.
 MANUAL_NATIVE_ASSUMPTIONS = {
     "aiHooks": [
-        "HsArgumentsEvaluate",
-        "HsReturn",
-        "AiPlayerAddFireteamSquad",
-        "AiObjectStateResolve",
-        "AiObjectSetTeam",
-        "AiPlacePreObjectReturn",
+        # Absolute return sites inside relocated functions. Kept in the profile
+        # native table (not signature-scanned) because they are call-return
+        # addresses rather than function entry points.
+        "aiPlayerAddFireteamSquadArgumentsReturn",
+        "aiPlayerAddFireteamSquadHsReturn",
+        "aiPlacePreObjectReturn",
     ],
     "layouts": [
         "thread TLS offsets",
@@ -151,6 +177,43 @@ MANUAL_NATIVE_ASSUMPTIONS = {
         "scenario trigger-volume and kill-trigger layout",
     ],
 }
+
+# Ordered fields for NativeAddressTable in native_address_table.h.
+NATIVE_ADDRESS_TABLE_FIELDS = [
+    "savedFilmOpen",
+    "commandPump",
+    "placementInitialize",
+    "objectNew",
+    "objectDelete",
+    "objectSetVariant",
+    "objectSetColors",
+    "objectChanged",
+    "objectGet",
+    "objectGetPosition",
+    "objectGetOrientation",
+    "objectTeleport",
+    "objectSetPhysics",
+    "unitAddWeapon",
+    "simulationContext",
+    "playerEnableInput",
+    "machinimaCameraToggle",
+    "aiPlace",
+    "actorNew",
+    "actorStartingLocationsBuild",
+    "cheatBumpPossession",
+    "skullMaskApply",
+    "tlsIndex",
+    "scenarioRootPointer",
+    "tagArenaTable",
+    "hsArgumentsEvaluate",
+    "hsReturn",
+    "aiPlayerAddFireteamSquad",
+    "aiPlayerAddFireteamSquadArgumentsReturn",
+    "aiPlayerAddFireteamSquadHsReturn",
+    "aiObjectStateResolve",
+    "aiObjectSetTeam",
+    "aiPlacePreObjectReturn",
+]
 
 CPP_NAMES = {
     "savedFilmOpen": "kSavedFilmOpenRva",
@@ -178,6 +241,18 @@ CPP_NAMES = {
     "tlsIndex": "kTlsIndexRva",
     "scenarioRootPointer": "kScenarioRootPointerRva",
     "tagArenaTable": "kTagArenaTableRva",
+    "hsArgumentsEvaluate": "kHsArgumentsEvaluateRva",
+    "hsReturn": "kHsReturnRva",
+    "aiPlayerAddFireteamSquad": "kAiPlayerAddFireteamSquadRva",
+    "aiPlayerAddFireteamSquadArgumentsReturn": (
+        "kAiPlayerAddFireteamSquadArgumentsReturnRva"
+    ),
+    "aiPlayerAddFireteamSquadHsReturn": (
+        "kAiPlayerAddFireteamSquadHsReturnRva"
+    ),
+    "aiObjectStateResolve": "kAiObjectStateResolveRva",
+    "aiObjectSetTeam": "kAiObjectSetTeamRva",
+    "aiPlacePreObjectReturn": "kAiPlacePreObjectReturnRva",
 }
 
 PROLOGUE_NAMES = {
@@ -205,6 +280,11 @@ PROLOGUE_NAMES = {
     "savedFilmOpen": ("kSavedFilmOpenPrologue", 16),
     "commandPump": ("kCommandPumpPrologue", 16),
     "skullMaskApply": ("kSkullMaskApplyPrologue", 16),
+    "hsArgumentsEvaluate": ("kHsArgumentsEvaluatePrologue", 20),
+    "hsReturn": ("kHsReturnPrologue", 20),
+    "aiPlayerAddFireteamSquad": ("kAiPlayerAddFireteamSquadPrologue", 16),
+    "aiObjectStateResolve": ("kAiObjectStateResolvePrologue", 16),
+    "aiObjectSetTeam": ("kAiObjectSetTeamPrologue", 16),
 }
 
 CHEAT_NAMES = [
@@ -510,6 +590,13 @@ def generate_header(
     bump = next(item for item in cheats if item["name"] == "cheat_bump_possession")
     native["cheatBumpPossession"] = bump["value"]
 
+    missing = [key for key in NATIVE_ADDRESS_TABLE_FIELDS if key not in native]
+    if missing:
+        raise RuntimeError(
+            "native address table is incomplete; missing: "
+            + ", ".join(missing)
+        )
+
     supported_builds = [
         candidate
         for candidate in catalog["profiles"]
@@ -520,6 +607,8 @@ def generate_header(
         "// Generated from src/HaloMeister.App/Assets/GameBuildProfiles.json.",
         f'// Regenerate with: python tools/game_build_analyzer.py --dll <path-to-dll> --base {native_layout} --generate {profile["id"]}',
         "// Do not hand-edit addresses here.",
+        "",
+        '#include "native_address_table.h"',
         "",
         "struct SupportedBuildIdentity",
         "{",
@@ -540,10 +629,18 @@ def generate_header(
     output.extend([
         "}};",
         "",
+        "constexpr NativeAddressTable kNativeAddresses{",
     ])
-    for key, cpp_name in CPP_NAMES.items():
+    for key in NATIVE_ADDRESS_TABLE_FIELDS:
+        output.append(f"    {native[key]}, // {key}")
+    output.extend([
+        "};",
+        "",
+    ])
+    for key in NATIVE_ADDRESS_TABLE_FIELDS:
+        cpp_name = CPP_NAMES[key]
         output.append(
-            f"constexpr std::uintptr_t {cpp_name} = {native[key]};"
+            f"constexpr std::uintptr_t {cpp_name} = kNativeAddresses.{key};"
         )
     output.append("")
     for key, (cpp_name, length) in PROLOGUE_NAMES.items():
@@ -552,10 +649,15 @@ def generate_header(
             if key == "simulationContext"
             else "kCommandPumpHookLength"
             if key == "commandPump"
+            else "kHsHookLength"
+            if key in ("hsArgumentsEvaluate", "hsReturn")
             else str(length)
         )
+        source_rva = selected.get(key)
+        if source_rva is None:
+            source_rva = parse_hex(native[key])
         output.append(
-            byte_array(cpp_name, read_rva(pe, selected[key], length), declared)
+            byte_array(cpp_name, read_rva(pe, source_rva, length), declared)
         )
     output.extend(
         [

@@ -1,0 +1,286 @@
+<Page
+    x:Class="HaloMeister.App.Pages.AiBattlePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:i18n="using:HaloMeister.App.Localization">
+
+    <Page.Resources>
+        <DataTemplate x:Key="BattleRosterTemplate">
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.2*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ComboBox
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Stretch"
+                    MinWidth="0"
+                    MaxDropDownHeight="360"
+                    DisplayMemberPath="DisplayName"
+                    PlaceholderText="{i18n:Loc Key='ai_battle.choose_character'}"
+                    ItemsSource="{Binding CharacterChoices}"
+                    SelectedItem="{Binding SelectedCharacter, Mode=TwoWay}" />
+                <ComboBox
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Stretch"
+                    MinWidth="0"
+                    MaxDropDownHeight="360"
+                    DisplayMemberPath="Label"
+                    PlaceholderText="{i18n:Loc Key='allegiance_demo.weapon'}"
+                    ItemsSource="{Binding WeaponChoices}"
+                    SelectedItem="{Binding SelectedWeapon, Mode=TwoWay}" />
+                <ComboBox
+                    Grid.Column="2"
+                    VerticalAlignment="Center"
+                    HorizontalAlignment="Stretch"
+                    MinWidth="0"
+                    MaxDropDownHeight="360"
+                    DisplayMemberPath="Label"
+                    PlaceholderText="{i18n:Loc Key='allegiance_demo.weapon_variant'}"
+                    IsEnabled="{Binding CanSelectWeaponVariant}"
+                    ItemsSource="{Binding WeaponVariantChoices}"
+                    SelectedItem="{Binding SelectedWeaponVariant, Mode=TwoWay}" />
+                <Button
+                    Grid.Column="3"
+                    Width="36"
+                    Height="32"
+                    Padding="0"
+                    VerticalAlignment="Center"
+                    Click="OnRemoveRow"
+                    ToolTipService.ToolTip="{i18n:Loc Key='ai_battle.remove'}">
+                    <SymbolIcon Symbol="Delete" />
+                </Button>
+            </Grid>
+        </DataTemplate>
+    </Page.Resources>
+
+    <Grid Padding="24,20,24,16" RowSpacing="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2" VerticalAlignment="Center">
+                <TextBlock
+                    Style="{ThemeResource TitleTextBlockStyle}"
+                    Text="{i18n:Loc Key='ai_battle.title'}" />
+                <TextBlock
+                    Style="{StaticResource CompactSafetyTextStyle}"
+                    Text="{i18n:Loc Key='ai_battle.description'}"
+                    TextTrimming="CharacterEllipsis"
+                    MaxLines="2" />
+            </StackPanel>
+            <StackPanel
+                Grid.Column="1"
+                Orientation="Horizontal"
+                Spacing="8"
+                VerticalAlignment="Center">
+                <TextBlock
+                    x:Name="BridgeStatusText"
+                    MaxWidth="260"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource CompactSafetyTextStyle}"
+                    TextTrimming="CharacterEllipsis"
+                    TextWrapping="NoWrap" />
+                <ProgressRing
+                    x:Name="BusyRing"
+                    Width="18"
+                    Height="18"
+                    IsActive="False" />
+            </StackPanel>
+            <Button
+                x:Name="GenerateButton"
+                Grid.Column="2"
+                MinWidth="132"
+                VerticalAlignment="Center"
+                Click="OnGenerate"
+                IsEnabled="False"
+                Style="{StaticResource AccentButtonStyle}">
+                <StackPanel Orientation="Horizontal" Spacing="7">
+                    <SymbolIcon Symbol="Play" />
+                    <TextBlock Text="{i18n:Loc Key='ai_battle.generate'}" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <InfoBar
+            x:Name="ModRequiredBanner"
+            Grid.Row="1"
+            IsClosable="False"
+            IsOpen="False"
+            Severity="Warning"
+            Title="{i18n:Loc Key='allegiance_demo.mod_required_title'}"
+            Message="{i18n:Loc Key='allegiance_demo.mod_required_body'}">
+            <InfoBar.ActionButton>
+                <Button
+                    Click="OnOpenBuiltinMod"
+                    Content="{i18n:Loc Key='allegiance_demo.open_builtin_mod'}" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
+        <Grid
+            x:Name="WorkspacePanel"
+            Grid.Row="2"
+            ColumnSpacing="14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="280" />
+                <ColumnDefinition Width="*" MinWidth="280" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource LiveToolCardStyle}">
+                <Grid RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Text="{i18n:Loc Key='ai_battle.friendly_title'}" />
+                            <TextBlock
+                                x:Name="FriendlyCountText"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource CompactSafetyTextStyle}" />
+                        </StackPanel>
+                        <Button
+                            x:Name="AddFriendlyButton"
+                            Grid.Column="1"
+                            Click="OnAddFriendly"
+                            Content="{i18n:Loc Key='ai_battle.add'}"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </Grid>
+
+                    <Grid Grid.Row="1">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl
+                                x:Name="FriendlyList"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                ItemTemplate="{StaticResource BattleRosterTemplate}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Spacing="12" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
+                        </ScrollViewer>
+                        <Border
+                            x:Name="EmptyFriendlyPanel"
+                            Style="{StaticResource LiveToolInsetStyle}"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Stretch"
+                            Margin="20">
+                            <TextBlock
+                                Style="{StaticResource CompactSafetyTextStyle}"
+                                Text="{i18n:Loc Key='ai_battle.empty_friendly'}"
+                                TextAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Style="{StaticResource LiveToolCardStyle}">
+                <Grid RowSpacing="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock
+                                FontWeight="SemiBold"
+                                Text="{i18n:Loc Key='ai_battle.hostile_title'}" />
+                            <TextBlock
+                                x:Name="HostileCountText"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource CompactSafetyTextStyle}" />
+                        </StackPanel>
+                        <Button
+                            x:Name="AddHostileButton"
+                            Grid.Column="1"
+                            Click="OnAddHostile"
+                            Content="{i18n:Loc Key='ai_battle.add'}"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    </Grid>
+
+                    <Grid Grid.Row="1">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl
+                                x:Name="HostileList"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Stretch"
+                                ItemTemplate="{StaticResource BattleRosterTemplate}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Spacing="12" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
+                        </ScrollViewer>
+                        <Border
+                            x:Name="EmptyHostilePanel"
+                            Style="{StaticResource LiveToolInsetStyle}"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Stretch"
+                            Margin="20">
+                            <TextBlock
+                                Style="{StaticResource CompactSafetyTextStyle}"
+                                Text="{i18n:Loc Key='ai_battle.empty_hostile'}"
+                                TextAlignment="Center" />
+                        </Border>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Grid Grid.Row="3" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button
+                x:Name="CeasefireButton"
+                HorizontalAlignment="Stretch"
+                Click="OnCeasefire"
+                Content="{i18n:Loc Key='ai_battle.ceasefire'}"
+                IsEnabled="False" />
+            <Button
+                x:Name="WarButton"
+                Grid.Column="1"
+                HorizontalAlignment="Stretch"
+                Click="OnWar"
+                Content="{i18n:Loc Key='ai_battle.war'}"
+                IsEnabled="False"
+                Style="{StaticResource AccentButtonStyle}" />
+        </Grid>
+
+        <InfoBar
+            x:Name="StatusBar"
+            Grid.Row="4"
+            IsClosable="True"
+            IsOpen="False" />
+    </Grid>
+</Page>

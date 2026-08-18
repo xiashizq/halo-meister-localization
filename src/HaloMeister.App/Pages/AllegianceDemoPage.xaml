@@ -245,6 +245,7 @@
                                                 <ColumnDefinition Width="108" />
                                                 <ColumnDefinition Width="88" />
                                                 <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <ComboBox
@@ -266,11 +267,21 @@
                                                 Grid.Column="2"
                                                 Header="{i18n:Loc Key='allegiance_demo.weapon'}"
                                                 HorizontalAlignment="Stretch"
+                                                MinWidth="0"
                                                 DisplayMemberPath="Label"
                                                 ItemsSource="{Binding WeaponChoices}"
                                                 SelectedItem="{Binding SelectedWeapon, Mode=TwoWay}" />
-                                            <Button
+                                            <ComboBox
                                                 Grid.Column="3"
+                                                Header="{i18n:Loc Key='allegiance_demo.weapon_variant'}"
+                                                HorizontalAlignment="Stretch"
+                                                MinWidth="0"
+                                                DisplayMemberPath="Label"
+                                                IsEnabled="{Binding CanSelectWeaponVariant}"
+                                                ItemsSource="{Binding WeaponVariantChoices}"
+                                                SelectedItem="{Binding SelectedWeaponVariant, Mode=TwoWay}" />
+                                            <Button
+                                                Grid.Column="4"
                                                 Width="36"
                                                 Height="32"
                                                 Margin="0,0,0,2"

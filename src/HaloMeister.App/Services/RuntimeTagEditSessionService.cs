@@ -8,7 +8,7 @@ namespace HaloMeister.App.Services;
 /// </summary>
 public sealed class RuntimeTagEditSessionService(RuntimeTagMemoryService memory)
 {
-    public const string SupportedBuildId = "2026-07-25-steam-post-cu2";
+    public const string SupportedBuildId = "2026-08-17-steam";
 
     private readonly RuntimeTagMemoryService _memory = memory;
 
@@ -17,7 +17,7 @@ public sealed class RuntimeTagEditSessionService(RuntimeTagMemoryService memory)
         SupportedBuildId.Equals(_memory.BuildProfileId, StringComparison.OrdinalIgnoreCase);
 
     public string SupportMessage => IsSupportedBuild
-        ? "Steam post-CU2 runtime tag editing is available."
+        ? "Steam August 17 runtime tag editing is available."
         : $"Runtime tag commits are limited to Steam {SupportedBuildId}.";
 
     public RuntimeTagEditPatch Stage(

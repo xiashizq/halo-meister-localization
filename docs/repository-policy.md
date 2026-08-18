@@ -11,6 +11,7 @@ repository is archived and retained only so old links continue to work.
   that version.
 - The release workflow rejects mismatched tags and publishes its assets to this
   repository's GitHub Releases page.
+- Release body text comes from `.github/release-notes/<Version>.md` (required).
 - The app checks GitHub's latest stable release from **Community & links** and
   compares it with its own informational version.
 

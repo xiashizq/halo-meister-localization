@@ -27,7 +27,7 @@ rest of the profile.
 
 ## Steam runtime tag editor
 
-Run this only with profile `2026-07-25-steam-post-cu2` in an offline mission
+Run this only with profile `2026-08-17-steam` in an offline mission
 and use a harmless scalar field with a known original value.
 
 1. Scan tags, open the tag, stage a field edit, and confirm it appears in the

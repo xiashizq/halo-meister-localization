@@ -110,12 +110,15 @@ jobs:
           $prerelease = "${{ inputs.prerelease }}" -eq "true"
           $title = "Halo Meister $version"
           $isTagPush = "${{ github.event_name }}" -eq "push"
-          # Fixed boilerplate - keep indented so YAML block scalars stay valid.
-          $notes = @(
-            '## Changes'
-            '- Fixed some issues'
-            '- Added some features'
-          ) -join "`n"
+
+          $notesPath = Join-Path ".github" "release-notes" "$version.md"
+          if (!(Test-Path -LiteralPath $notesPath -PathType Leaf)) {
+            throw "Missing release notes file: $notesPath"
+          }
+          $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding utf8
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            throw "Release notes file is empty: $notesPath"
+          }
 
           $existing = $null
           try { $existing = gh release view $tag 2>$null } catch { $existing = $null }
@@ -123,19 +126,23 @@ jobs:
           if ($existing) {
             Write-Host "Updating existing release $tag"
             gh release upload $tag $zip $sha --clobber
+            $notesFile = Join-Path $env:RUNNER_TEMP "release-notes-$version.md"
+            Set-Content -LiteralPath $notesFile -Value $notes -Encoding utf8
             if ($prerelease) {
-              gh release edit $tag --prerelease --title $title --notes $notes
+              gh release edit $tag --prerelease --title $title --notes-file $notesFile
             } else {
-              gh release edit $tag --latest --title $title --notes $notes
+              gh release edit $tag --latest --title $title --notes-file $notesFile
             }
             return
           }
 
           Write-Host "Creating release $tag"
+          $notesFile = Join-Path $env:RUNNER_TEMP "release-notes-$version.md"
+          Set-Content -LiteralPath $notesFile -Value $notes -Encoding utf8
           $ghArgs = @(
             "release", "create", $tag, $zip, $sha,
             "--title", $title,
-            "--notes", $notes
+            "--notes-file", $notesFile
           )
           if ($prerelease) { $ghArgs += "--prerelease" }
           if (-not $isTagPush) {

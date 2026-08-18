@@ -70,6 +70,7 @@ fn run() -> Result<()> {
     let mut output = None;
     let mut inspect = None;
     let mut expand_palettes = false;
+    let mut expand_characters = false;
     let mut ensure_demo_squads = false;
     let mut dump_demo_squads = false;
     let mut dump_filter = None;
@@ -83,6 +84,7 @@ fn run() -> Result<()> {
             "--output" => output = args.next().map(PathBuf::from),
             "--inspect" => inspect = args.next().map(|value| value.to_string_lossy().into_owned()),
             "--expand-palettes" => expand_palettes = true,
+            "--expand-characters" => expand_characters = true,
             "--ensure-demo-squads" => ensure_demo_squads = true,
             "--dump-demo-squads" => dump_demo_squads = true,
             "--filter" => {
@@ -141,6 +143,21 @@ fn run() -> Result<()> {
             report.ally_added,
             report.ally_from_hostile_fallback,
             report.hostile_added
+        );
+        return Ok(());
+    }
+    if expand_characters {
+        let output =
+            priority_output(output.context("--output is required with --expand-characters")?);
+        let report =
+            expand_palettes::write_superior_character_overlay(&archives, &output, dry_run)?;
+        for line in &report.lines {
+            println!("{line}");
+        }
+        println!(
+            "Summary: {} superior AI character overlay(s){}",
+            report.written,
+            if dry_run { " (dry run)" } else { "" }
         );
         return Ok(());
     }

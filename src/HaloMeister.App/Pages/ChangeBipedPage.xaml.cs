@@ -115,6 +115,13 @@ public sealed partial class ChangeBipedPage : Page, IActivatablePage
     {
         if (sender is not FrameworkElement { Tag: CharacterOverlayPackage package })
             return;
+        if (package.IsExpired)
+        {
+            ShowStatus(
+                L.Get("change_biped.character_overlay_expired_blocked"),
+                InfoBarSeverity.Warning);
+            return;
+        }
         if (string.IsNullOrWhiteSpace(package.SourceUtocPath))
             return;
 

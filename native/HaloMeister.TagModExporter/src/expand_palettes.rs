@@ -192,7 +192,47 @@ pub fn expand_all_mission_palettes(
         edited.push((*archive_index, rel_path.clone(), serialized));
     }
 
-    let mut ai_overrides = Vec::new();
+    if dry_run {
+        report.lines.push("Dry run: no overlay files written.".to_owned());
+        return Ok(report);
+    }
+    if edited.is_empty() {
+        report.lines.push(
+            "Every scenario already contained the full catalogs and demo squads.".to_owned(),
+        );
+        return Ok(report);
+    }
+
+    let overrides: Vec<(&IoStoreArchive, &str, &[u8])> = edited
+        .iter()
+        .map(|(archive, path, bytes)| (&archives[*archive], path.as_str(), bytes.as_slice()))
+        .collect();
+    blam_tags::iostore::writer::write_mod_container_ex(&overrides, &[], output)
+        .with_context(|| format!("could not write {}", output.display()))?;
+    report.lines.push(format!(
+        "Wrote {} edited scenario(s) to {}",
+        edited.len(),
+        output.display()
+    ));
+    Ok(report)
+}
+
+pub struct CharacterOverlayReport {
+    pub written: usize,
+    pub lines: Vec<String>,
+}
+
+/// Superior Marines / Covenant `[char]` AI as an independent overlay.
+pub fn write_superior_character_overlay(
+    archives: &[IoStoreArchive],
+    output: &Path,
+    dry_run: bool,
+) -> Result<CharacterOverlayReport> {
+    let mut report = CharacterOverlayReport {
+        written: 0,
+        lines: Vec::new(),
+    };
+    let mut overrides = Vec::new();
     for baked in SUPERIOR_AI_TAGS {
         let bytes = if baked.file_suffix.contains("trooper-character") {
             let (tuned, lines) = tune_marine_ai::apply_aggressive_trooper(baked.bytes)?;
@@ -214,32 +254,24 @@ pub fn expand_all_mission_palettes(
             baked.label,
             bytes.len()
         ));
-        ai_overrides.push((archive_index, rel_path, bytes));
+        overrides.push((archive_index, rel_path, bytes));
     }
 
     if dry_run {
-        report.lines.push("Dry run: no overlay files written.".to_owned());
+        report.lines.push("Dry run: no character overlay files written.".to_owned());
         return Ok(report);
     }
-    if edited.is_empty() {
-        report.lines.push(
-            "Every scenario already contained the full catalogs and demo squads.".to_owned(),
-        );
-    }
 
-    let mut overrides: Vec<(&IoStoreArchive, &str, &[u8])> = edited
+    let write_args: Vec<(&IoStoreArchive, &str, &[u8])> = overrides
         .iter()
         .map(|(archive, path, bytes)| (&archives[*archive], path.as_str(), bytes.as_slice()))
         .collect();
-    for (archive_index, rel_path, bytes) in &ai_overrides {
-        overrides.push((&archives[*archive_index], rel_path.as_str(), bytes.as_slice()));
-    }
-    blam_tags::iostore::writer::write_mod_container_ex(&overrides, &[], output)
+    blam_tags::iostore::writer::write_mod_container_ex(&write_args, &[], output)
         .with_context(|| format!("could not write {}", output.display()))?;
+    report.written = overrides.len();
     report.lines.push(format!(
-        "Wrote {} edited scenario(s) + {} superior AI character(s) to {}",
-        edited.len(),
-        ai_overrides.len(),
+        "Wrote {} superior AI character(s) to {}",
+        overrides.len(),
         output.display()
     ));
     Ok(report)

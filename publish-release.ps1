@@ -46,6 +46,9 @@ $requiredSources = @(
     'src\HaloMeister.App\Assets\Overlays\MMYJ_FULL_VEHI_WAP_P.utoc',
     'src\HaloMeister.App\Assets\Overlays\MMYJ_FULL_VEHI_WAP_P.ucas',
     'src\HaloMeister.App\Assets\Overlays\MMYJ_FULL_VEHI_WAP_P.pak',
+    'src\HaloMeister.App\Assets\Overlays\MMYJ_FULL_CHAR_P.utoc',
+    'src\HaloMeister.App\Assets\Overlays\MMYJ_FULL_CHAR_P.ucas',
+    'src\HaloMeister.App\Assets\Overlays\MMYJ_FULL_CHAR_P.pak',
     'src\HaloMeister.App\Assets\Definitions\haloce_evolved\_meta.json'
 )
 foreach ($relative in $requiredSources) {
@@ -87,6 +90,9 @@ $requiredPackageFiles = @(
     'Assets\Overlays\MMYJ_FULL_VEHI_WAP_P.utoc',
     'Assets\Overlays\MMYJ_FULL_VEHI_WAP_P.ucas',
     'Assets\Overlays\MMYJ_FULL_VEHI_WAP_P.pak',
+    'Assets\Overlays\MMYJ_FULL_CHAR_P.utoc',
+    'Assets\Overlays\MMYJ_FULL_CHAR_P.ucas',
+    'Assets\Overlays\MMYJ_FULL_CHAR_P.pak',
     'Assets\Definitions\haloce_evolved\_meta.json',
     'Assets\Definitions\haloce_evolved\weapon.json'
 )

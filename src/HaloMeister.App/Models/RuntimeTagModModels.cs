@@ -8,6 +8,11 @@ public sealed class RuntimeTagModDocument
     public string Format { get; set; } = CurrentFormat;
     public int Version { get; set; } = CurrentVersion;
     public string Name { get; set; } = "";
+    /// <summary>
+    /// Game-build profile id this mod was exported against. Missing or mismatched
+    /// values mean the pack is expired after a Campaign Evolved update.
+    /// </summary>
+    public string? GameBuildId { get; set; }
     public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.UtcNow;
     public List<RuntimeTagModTag> Tags { get; set; } = [];
 }

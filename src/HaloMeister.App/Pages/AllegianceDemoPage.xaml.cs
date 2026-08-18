@@ -160,7 +160,8 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
                 character,
                 variant,
                 team.Value,
-                weaponPick.Weapon));
+                weaponPick.Weapon,
+                weaponVariant: null));
         if (existing is not null)
         {
             existing.Quantity = Math.Min(50, existing.Quantity + 1);
@@ -184,10 +185,15 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
 
     private void OnSquadItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (sender is not AllegianceSquadItem item)
+            return;
+        if (e.PropertyName is nameof(AllegianceSquadItem.SelectedWeapon))
+            LoadWeaponVariants(item);
         if (e.PropertyName is nameof(AllegianceSquadItem.Quantity)
             or nameof(AllegianceSquadItem.QuantityValue)
             or nameof(AllegianceSquadItem.SelectedTeam)
-            or nameof(AllegianceSquadItem.SelectedWeapon))
+            or nameof(AllegianceSquadItem.SelectedWeapon)
+            or nameof(AllegianceSquadItem.SelectedWeaponVariant))
         {
             UpdateControls();
         }
@@ -419,7 +425,8 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
                         batchCount,
                         offsetX,
                         offsetY,
-                        item.SelectedWeapon.Weapon);
+                        item.SelectedWeapon.Weapon,
+                        item.SelectedWeaponVariant.Variant);
                     if (spawn.SpawnResult.Outcome == ScriptOutcome.Failed)
                     {
                         string detail = string.IsNullOrWhiteSpace(spawn.SpawnResult.Message)
@@ -602,10 +609,44 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
 
     private void OnStatusTick(object? sender, object e) => UpdateControls();
 
+    private void LoadWeaponVariants(AllegianceSquadItem item)
+    {
+        AiWeaponChoice? weapon = item.SelectedWeapon.Weapon;
+        item.ResetWeaponVariants();
+        if (weapon is null)
+            return;
+        uint datum = weapon.Datum;
+        _ = Task.Run(() =>
+        {
+            IReadOnlyList<WeaponModelVariant> variants;
+            try
+            {
+                variants = _demo.GetWeaponVariants(weapon);
+            }
+            catch
+            {
+                variants = [];
+            }
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (item.SelectedWeapon.Weapon?.Datum != datum)
+                    return;
+                item.SetWeaponVariants(variants);
+                UpdateControls();
+            });
+        });
+    }
+
     private sealed record WeaponOption(string Label, AiWeaponChoice? Weapon)
     {
         public static WeaponOption Default { get; } =
             new(L.Get("allegiance_demo.weapon_default"), null);
+    }
+
+    private sealed record WeaponVariantOption(string Label, WeaponModelVariant? Variant)
+    {
+        public static WeaponVariantOption Default { get; } =
+            new(L.Get("allegiance_demo.weapon_variant_default"), null);
     }
 
     private sealed class AllegianceSquadItem : ObservableObject
@@ -613,6 +654,9 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
         private int _quantity;
         private PlayerTeamOption _selectedTeam;
         private WeaponOption _selectedWeapon;
+        private WeaponVariantOption _selectedWeaponVariant = WeaponVariantOption.Default;
+        private IReadOnlyList<WeaponVariantOption> _weaponVariantChoices =
+            [WeaponVariantOption.Default];
 
         public AllegianceSquadItem(
             EnemySpawnChoice character,
@@ -636,6 +680,8 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
         public SpawnVariantChoice Variant { get; }
         public IReadOnlyList<PlayerTeamOption> TeamChoices { get; }
         public IReadOnlyList<WeaponOption> WeaponChoices { get; }
+        public IReadOnlyList<WeaponVariantOption> WeaponVariantChoices =>
+            _weaponVariantChoices;
 
         public int Quantity
         {
@@ -672,9 +718,49 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
             get => _selectedWeapon;
             set
             {
-                if (Set(ref _selectedWeapon, value ?? WeaponOption.Default))
+                if (!Set(ref _selectedWeapon, value ?? WeaponOption.Default))
+                    return;
+                ResetWeaponVariants();
+                Raise(nameof(Detail));
+                Raise(nameof(CanSelectWeaponVariant));
+            }
+        }
+
+        public WeaponVariantOption SelectedWeaponVariant
+        {
+            get => _selectedWeaponVariant;
+            set
+            {
+                if (Set(ref _selectedWeaponVariant, value ?? WeaponVariantOption.Default))
                     Raise(nameof(Detail));
             }
+        }
+
+        public bool CanSelectWeaponVariant =>
+            SelectedWeapon.Weapon is not null && _weaponVariantChoices.Count > 1;
+
+        public void ResetWeaponVariants()
+        {
+            _weaponVariantChoices = [WeaponVariantOption.Default];
+            _selectedWeaponVariant = WeaponVariantOption.Default;
+            Raise(nameof(WeaponVariantChoices));
+            Raise(nameof(SelectedWeaponVariant));
+            Raise(nameof(CanSelectWeaponVariant));
+            Raise(nameof(Detail));
+        }
+
+        public void SetWeaponVariants(IReadOnlyList<WeaponModelVariant> variants)
+        {
+            _weaponVariantChoices =
+            [
+                WeaponVariantOption.Default,
+                .. variants.Select(item => new WeaponVariantOption(item.Name, item)),
+            ];
+            _selectedWeaponVariant = WeaponVariantOption.Default;
+            Raise(nameof(WeaponVariantChoices));
+            Raise(nameof(SelectedWeaponVariant));
+            Raise(nameof(CanSelectWeaponVariant));
+            Raise(nameof(Detail));
         }
 
         public string DisplayName => Character.DisplayName;
@@ -684,24 +770,40 @@ public sealed partial class AllegianceDemoPage : Page, IActivatablePage
                 ? Variant.Name
                 : $"{Character.Category} · {Variant.Name}";
 
-        public string Detail =>
-            string.Join(
-                " · ",
-                Variant.Name,
-                SelectedTeam.Label,
-                SelectedWeapon.Label);
+        public string Detail
+        {
+            get
+            {
+                var parts = new List<string>
+                {
+                    Variant.Name,
+                    SelectedTeam.Label,
+                    SelectedWeapon.Label,
+                };
+                if (SelectedWeaponVariant.Variant is not null)
+                    parts.Add(SelectedWeaponVariant.Label);
+                return string.Join(" · ", parts);
+            }
+        }
 
         public string QuantityLabel => $"×{Quantity:N0}";
 
         public string Identity =>
-            MakeIdentity(Character, Variant, SelectedTeam.Value, SelectedWeapon.Weapon);
+            MakeIdentity(
+                Character,
+                Variant,
+                SelectedTeam.Value,
+                SelectedWeapon.Weapon,
+                SelectedWeaponVariant.Variant);
 
         public static string MakeIdentity(
             EnemySpawnChoice character,
             SpawnVariantChoice variant,
             int team,
-            AiWeaponChoice? weapon) =>
+            AiWeaponChoice? weapon,
+            WeaponModelVariant? weaponVariant) =>
             $"{character.CharacterTag.Index}:{variant.StringId:X8}:{team}:" +
-            $"{weapon?.Datum.ToString("X8") ?? "default"}";
+            $"{weapon?.Datum.ToString("X8") ?? "default"}:" +
+            $"{weaponVariant?.StringId.ToString("X8") ?? "default"}";
     }
 }

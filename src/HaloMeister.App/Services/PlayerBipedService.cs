@@ -308,6 +308,7 @@ public sealed class PlayerBipedService : IDisposable
         return new RuntimeTagModDocument
         {
             Name = $"Character redirect: {target.Name} / {variantName}",
+            GameBuildId = RuntimeTagEditSessionService.SupportedBuildId,
             Tags =
             [
                 new RuntimeTagModTag
@@ -366,6 +367,10 @@ public sealed class PlayerBipedService : IDisposable
     public NativeTagModInstallResult InstallTagRedirectOverlay(string utocPath)
     {
         string stem = Path.GetFileNameWithoutExtension(utocPath);
+        string localDir = GetCharacterOverlayDirectory();
+        if (IsCharacterOverlayExpired(localDir, null, stem, existsLocally: true))
+            throw new InvalidOperationException(
+                L.Get("change_biped.character_overlay_expired_blocked"));
         return new NativeTagModExportService().ReplaceManagedOverlay(utocPath, stem);
     }
 
@@ -450,15 +455,20 @@ public sealed class PlayerBipedService : IDisposable
                             StringComparison.Ordinal);
                 }
 
-                // Install only when a local package exists and either nothing is
-                // installed for this stem, or the installed files differ.
+                bool isExpired = IsCharacterOverlayExpired(localDir, paks, stem, existsLocally);
+
+                // Install only when a local package exists, matches the current
+                // game build, and either nothing is installed or files differ.
                 bool canInstall =
                     existsLocally &&
+                    !isExpired &&
                     !string.IsNullOrWhiteSpace(sourceUtoc) &&
                     (!isInstalled || !contentsMatch);
 
                 bool installedOnly = !existsLocally && hasInstalledFiles;
-                string status = (existsLocally, isInstalled, contentsMatch) switch
+                string status = isExpired
+                    ? L.Get("change_biped.overlay_status_expired")
+                    : (existsLocally, isInstalled, contentsMatch) switch
                 {
                     (true, true, true) => L.Get("change_biped.overlay_status_local_installed"),
                     (true, true, false) => L.Get("change_biped.overlay_status_local_outdated_install"),
@@ -474,6 +484,7 @@ public sealed class PlayerBipedService : IDisposable
                     modified,
                     existsLocally,
                     isInstalled || hasInstalledFiles,
+                    IsExpired: isExpired,
                     CanInstall: canInstall,
                     // Keep enabled for installed-only packs; click path reports
                     // file-in-use if the game still holds the overlay open.
@@ -484,6 +495,48 @@ public sealed class PlayerBipedService : IDisposable
             .OrderByDescending(package => package.Modified)
             .ThenBy(package => package.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Character packs are stamped with <see cref="RuntimeTagEditSessionService.SupportedBuildId"/>
+    /// at export time. Anything older or missing that stamp is unusable after a
+    /// Campaign Evolved content update.
+    /// </summary>
+    private static bool IsCharacterOverlayExpired(
+        string localDir,
+        string? paks,
+        string stem,
+        bool existsLocally)
+    {
+        string? sidecar = null;
+        if (existsLocally)
+        {
+            string localSidecar = Path.Combine(localDir, stem + ".hmtagmod");
+            if (File.Exists(localSidecar))
+                sidecar = localSidecar;
+        }
+        if (sidecar is null && paks is not null)
+        {
+            string installedSidecar = Path.Combine(paks, stem + ".hmtagmod");
+            if (File.Exists(installedSidecar))
+                sidecar = installedSidecar;
+        }
+
+        if (sidecar is null)
+            return true;
+
+        try
+        {
+            RuntimeTagModDocument document = new RuntimeTagModService().Load(sidecar);
+            return !string.Equals(
+                document.GameBuildId,
+                RuntimeTagEditSessionService.SupportedBuildId,
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     public static string GetCharacterOverlayDirectory() =>
@@ -947,6 +1000,7 @@ public sealed record CharacterOverlayPackage(
     DateTime Modified,
     bool ExistsLocally,
     bool IsInstalled,
+    bool IsExpired,
     bool CanInstall,
     bool CanUninstall,
     bool CanDelete,

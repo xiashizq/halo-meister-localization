@@ -186,6 +186,13 @@
                                 <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE99A;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
+                        <!-- Temporarily hidden
+                        <NavigationViewItem x:Name="AiBattleNavItem" Content="{i18n:Loc Key='shell.ai_battle'}" Tag="live-ai-battle">
+                            <NavigationViewItem.Icon>
+                                <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" Glyph="&#xE8F2;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
+                        -->
                         <NavigationViewItem x:Name="PlayerAppearanceNavItem" Content="{i18n:Loc Key='shell.player_appearance'}" Icon="Contact" Tag="live-player" />
                         <NavigationViewItem x:Name="CameraWorldNavItem" Content="{i18n:Loc Key='shell.camera_world'}" Icon="Video" Tag="live-world" />
                     </NavigationViewItem.MenuItems>

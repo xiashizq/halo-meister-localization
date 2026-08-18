@@ -102,6 +102,16 @@ public sealed class NativeTagModExportService
                     L.Get("change_biped.character_overlay_file_in_use"), ex);
             }
         }
+        string sidecar = Path.Combine(paks, managedStem + ".hmtagmod");
+        if (File.Exists(sidecar))
+        {
+            try { File.Delete(sidecar); }
+            catch (IOException ex) when (IsSharingViolation(ex))
+            {
+                throw new InvalidOperationException(
+                    L.Get("change_biped.character_overlay_file_in_use"), ex);
+            }
+        }
 
         string source = Path.GetFullPath(sourceUtoc);
         string sourceStem = Path.GetFileNameWithoutExtension(source);
@@ -150,6 +160,20 @@ public sealed class NativeTagModExportService
             {
                 File.Delete(path);
                 removed.Add(path);
+            }
+            catch (IOException ex) when (IsSharingViolation(ex))
+            {
+                throw new InvalidOperationException(
+                    L.Get("change_biped.character_overlay_file_in_use"), ex);
+            }
+        }
+        string sidecar = Path.Combine(paks, managedStem + ".hmtagmod");
+        if (File.Exists(sidecar))
+        {
+            try
+            {
+                File.Delete(sidecar);
+                removed.Add(sidecar);
             }
             catch (IOException ex) when (IsSharingViolation(ex))
             {
@@ -234,6 +258,28 @@ public sealed class NativeTagModExportService
                 File.Copy(sources[index], temporary, false);
                 File.Move(temporary, destinations[index], true);
                 copied.Add(destinations[index]);
+            }
+
+            // Keep the export sidecar with the install so build-id expiry checks
+            // still work for packs that only exist under Paks.
+            string sourceSidecar = Path.ChangeExtension(source, ".hmtagmod");
+            string destinationSidecar = Path.Combine(paks, stem + ".hmtagmod");
+            if (File.Exists(sourceSidecar))
+            {
+                if (replaceExisting && File.Exists(destinationSidecar))
+                {
+                    try { File.Delete(destinationSidecar); }
+                    catch (IOException ex) when (IsSharingViolation(ex))
+                    {
+                        throw new InvalidOperationException(
+                            L.Get("change_biped.character_overlay_file_in_use"), ex);
+                    }
+                }
+                string temporarySidecar =
+                    destinationSidecar + $".{Guid.NewGuid():N}.tmp";
+                File.Copy(sourceSidecar, temporarySidecar, false);
+                File.Move(temporarySidecar, destinationSidecar, true);
+                copied.Add(destinationSidecar);
             }
         }
         catch (IOException ex) when (IsSharingViolation(ex))

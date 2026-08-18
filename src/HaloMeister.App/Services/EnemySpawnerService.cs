@@ -195,6 +195,7 @@ public sealed class EnemySpawnerService : IDisposable
         bool followPlayer = false,
         bool clearSquadObjective = false,
         ushort? campaignTeam = null,
+        WeaponModelVariant? weaponVariant = null,
         CancellationToken cancellationToken = default)
     {
         if (!_memory.IsConnected)
@@ -247,6 +248,22 @@ public sealed class EnemySpawnerService : IDisposable
         }
         if (plan.Diagnosis.FireteamFollow)
             ClearDedicatedAllyFireteamAbsorber(plan.Template);
+        IReadOnlyList<MemoryPatch> weaponVariantPatches = [];
+        try
+        {
+            if (weapon is not null &&
+                weaponVariant is not null &&
+                weaponVariant.StringId != 0)
+            {
+                MemoryPatch? patch = BeginWeaponDefaultVariant(weapon, weaponVariant);
+                if (patch is not null)
+                    weaponVariantPatches = [patch];
+            }
+        }
+        catch
+        {
+            weaponVariantPatches = [];
+        }
         try
         {
             if (plan.Diagnosis.FireteamFollow)
@@ -273,6 +290,8 @@ public sealed class EnemySpawnerService : IDisposable
         }
         finally
         {
+            try { RestorePatches(weaponVariantPatches); }
+            catch { /* best-effort */ }
             try { RestorePatches(unsuppressPatches); }
             catch { /* best-effort */ }
             RestorePatches(objectivePatches);
@@ -714,6 +733,40 @@ public sealed class EnemySpawnerService : IDisposable
         GetAllWeapons();
 
     /// <summary>
+    /// Weapons authored on the character tag. Prefer these over a borrowed
+    /// squad scaffold's starting weapon, which is often invalid for Elites.
+    /// </summary>
+    public IReadOnlyList<AiWeaponChoice> GetAuthoredWeapons(EnemySpawnChoice character)
+    {
+        if (!_memory.IsConnected)
+            return [];
+        if (_tags.Count == 0)
+            _tags = _memory.ReadTags();
+        try
+        {
+            WarmUpDefinitions();
+        }
+        catch
+        {
+            return [];
+        }
+
+        RuntimeTagEntry live = _tags.FirstOrDefault(tag =>
+                tag.Index == character.CharacterTag.Index &&
+                string.Equals(tag.Group, "char", StringComparison.OrdinalIgnoreCase) &&
+                tag.DataAddress > 0)
+            ?? character.CharacterTag;
+        try
+        {
+            return ReadCompatibleWeapons(live);
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
     /// Every loaded <c>weap</c> tag currently in the process (not limited to the
     /// character's authored <c>character_weapons_block</c>).
     /// </summary>
@@ -732,6 +785,137 @@ public sealed class EnemySpawnerService : IDisposable
             .Select(group => new AiWeaponChoice(group.First()))
             .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    public IReadOnlyList<WeaponModelVariant> ReadWeaponVariants(AiWeaponChoice weapon)
+    {
+        if (!_memory.IsConnected)
+            return [];
+        try
+        {
+            WarmUpDefinitions();
+        }
+        catch
+        {
+            return [];
+        }
+        if (!_definitions.HasSchema("weap") || !_definitions.HasSchema("hlmt"))
+            return [];
+        if (_tags.Count == 0)
+            _tags = _memory.ReadTags();
+
+        RuntimeTagEntry live = _tags.FirstOrDefault(tag =>
+                tag.Index == weapon.WeaponTag.Index &&
+                string.Equals(tag.Group, "weap", StringComparison.OrdinalIgnoreCase) &&
+                tag.DataAddress > 0)
+            ?? weapon.WeaponTag;
+        IReadOnlyList<RuntimeTagFieldValue> root;
+        try
+        {
+            root = ReadRoot(live);
+        }
+        catch
+        {
+            return [];
+        }
+
+        RuntimeTagFieldValue? modelReference = root.FirstOrDefault(field =>
+            field.IsTagReference &&
+            string.Equals(
+                CleanFieldName(field.Name),
+                "model",
+                StringComparison.OrdinalIgnoreCase));
+        if (modelReference is null)
+            return [];
+        RuntimeTagEntry? model = _tags.FirstOrDefault(tag =>
+            tag.Index == modelReference.ReferencedTagIndex &&
+            string.Equals(tag.Group, "hlmt", StringComparison.OrdinalIgnoreCase) &&
+            tag.DataAddress > 0);
+        if (model is null)
+            return [];
+
+        IReadOnlyList<RuntimeTagFieldValue> modelRoot;
+        try
+        {
+            modelRoot = ReadRoot(model);
+        }
+        catch
+        {
+            return [];
+        }
+
+        RuntimeTagFieldValue? variants = modelRoot.FirstOrDefault(field =>
+            field.CanOpenBlock &&
+            string.Equals(
+                field.ChildBlockDefinition,
+                "model_variant_block",
+                StringComparison.OrdinalIgnoreCase));
+        if (variants is null || variants.ChildCount <= 0)
+            return [];
+
+        var result = new List<WeaponModelVariant>(variants.ChildCount);
+        for (int index = 0; index < variants.ChildCount; index++)
+        {
+            IReadOnlyList<RuntimeTagFieldValue> fields;
+            try
+            {
+                fields = ReadBlock(model, variants, index);
+            }
+            catch
+            {
+                continue;
+            }
+            RuntimeTagFieldValue? name = fields.FirstOrDefault(field =>
+                field.Type == "string_id" &&
+                field.Size == sizeof(uint) &&
+                string.Equals(
+                    CleanFieldName(field.Name),
+                    "name",
+                    StringComparison.OrdinalIgnoreCase));
+            if (name is null)
+                continue;
+            uint stringId = BinaryPrimitives.ReadUInt32LittleEndian(
+                _memory.ReadBytes(name.Address, name.Size));
+            string label = _memory.TryGetStringIdName(stringId, out string? authored) &&
+                !string.IsNullOrWhiteSpace(authored)
+                    ? authored!
+                    : index == 0 ? "Default" : $"Variant {index + 1:00}";
+            result.Add(new WeaponModelVariant(index, stringId, label));
+        }
+        return result;
+    }
+
+    private MemoryPatch? BeginWeaponDefaultVariant(
+        AiWeaponChoice weapon,
+        WeaponModelVariant variant)
+    {
+        if (_tags.Count == 0)
+            _tags = _memory.ReadTags();
+        RuntimeTagEntry? live = _tags.FirstOrDefault(tag =>
+                tag.Index == weapon.WeaponTag.Index &&
+                string.Equals(tag.Group, "weap", StringComparison.OrdinalIgnoreCase) &&
+                tag.DataAddress > 0)
+            ?? (weapon.WeaponTag.DataAddress > 0 ? weapon.WeaponTag : null);
+        if (live is null)
+            return null;
+
+        RuntimeTagFieldValue? defaultVariant = ReadRoot(live).FirstOrDefault(field =>
+            field.Type == "string_id" &&
+            field.Size == sizeof(uint) &&
+            string.Equals(
+                CleanFieldName(field.Name),
+                "default model variant",
+                StringComparison.OrdinalIgnoreCase));
+        if (defaultVariant is null)
+            return null;
+
+        byte[] original = _memory.ReadBytes(defaultVariant.Address, sizeof(uint));
+        byte[] replacement = new byte[sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(replacement, variant.StringId);
+        if (original.AsSpan().SequenceEqual(replacement))
+            return null;
+        _memory.WriteVerified(defaultVariant.Address, replacement);
+        return new MemoryPatch(defaultVariant.Address, original);
     }
 
     public IReadOnlyList<EnemySpawnChoice> GetCharacterFamilyVariants(

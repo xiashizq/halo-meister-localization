@@ -213,14 +213,6 @@
                                         FontSize="11"
                                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                         TextWrapping="Wrap" />
-                                    <Button
-                                        x:Name="LoadButton"
-                                        Margin="0,8,0,0"
-                                        HorizontalAlignment="Left"
-                                        Click="OnLoadWeapon"
-                                        Content="{i18n:Loc Key='weapon_loader.pick_up_and_equip'}"
-                                        IsEnabled="False"
-                                        Style="{StaticResource AccentButtonStyle}" />
                                 </StackPanel>
                             </Grid>
 
@@ -236,34 +228,69 @@
                                 Background="{ThemeResource LayerFillColorDefaultBrush}"
                                 CornerRadius="8">
                                 <StackPanel Spacing="10">
-                                    <StackPanel Spacing="3">
-                                        <TextBlock
-                                            Style="{ThemeResource BodyStrongTextBlockStyle}"
-                                            Text="{i18n:Loc Key='weapon_loader.weapon_variant'}" />
-                                        <TextBlock
-                                            x:Name="VariantSummaryText"
-                                            FontSize="12"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                            TextWrapping="Wrap" />
-                                    </StackPanel>
-                                    <ComboBox
-                                        x:Name="VariantPicker"
-                                        HorizontalAlignment="Stretch"
-                                        IsEnabled="False"
-                                        SelectionChanged="OnVariantSelectionChanged">
-                                        <ComboBox.ItemTemplate>
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock
+                                                Style="{ThemeResource BodyStrongTextBlockStyle}"
+                                                Text="{i18n:Loc Key='weapon_loader.weapon_variant'}" />
+                                            <TextBlock
+                                                x:Name="VariantSummaryText"
+                                                FontSize="12"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Button
+                                            x:Name="EquipDefaultButton"
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Click="OnEquipDefault"
+                                            Content="{i18n:Loc Key='weapon_loader.equip'}"
+                                            Style="{StaticResource AccentButtonStyle}"
+                                            Visibility="Collapsed" />
+                                    </Grid>
+                                    <ItemsControl x:Name="VariantList" IsEnabled="False">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <StackPanel Spacing="8" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
                                             <DataTemplate>
-                                                <StackPanel MinWidth="300" Padding="2,4" Spacing="2">
-                                                    <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                                                    <TextBlock
-                                                        FontFamily="Consolas"
-                                                        FontSize="10"
-                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                        Text="{Binding Detail}" />
-                                                </StackPanel>
+                                                <Border
+                                                    Padding="12,10"
+                                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6">
+                                                    <Grid ColumnSpacing="12">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                                                            <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                                            <TextBlock
+                                                                FontFamily="Consolas"
+                                                                FontSize="10"
+                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                                Text="{Binding Detail}" />
+                                                        </StackPanel>
+                                                        <Button
+                                                            Grid.Column="1"
+                                                            VerticalAlignment="Center"
+                                                            Click="OnEquipVariant"
+                                                            Content="{i18n:Loc Key='weapon_loader.equip'}"
+                                                            Style="{StaticResource AccentButtonStyle}"
+                                                            Tag="{Binding}" />
+                                                    </Grid>
+                                                </Border>
                                             </DataTemplate>
-                                        </ComboBox.ItemTemplate>
-                                    </ComboBox>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
                                 </StackPanel>
                             </Border>
 

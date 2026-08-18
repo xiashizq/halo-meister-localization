@@ -989,7 +989,7 @@ public sealed partial class ConfigPage : Page, IActivatablePage
         if (ContainsAny(key, "Mouse", "KBM")) return L.Get("config.category_keyboard_mouse");
         if (ContainsAny(key, "Controller", "Gamepad")) return L.Get("config.category_controller");
         if (ContainsAny(key, "Volume", "Audio", "Voice", "TTS", "DynamicRange")) return L.Get("config.category_audio_voice");
-        if (ContainsAny(key, "Quality", "Resolution", "Upscal", "Frame", "VSync", "HDR", "Monitor", "Brightness", "Contrast", "AsyncCompute", "Latency"))
+        if (ContainsAny(key, "Quality", "Resolution", "Upscal", "Frame", "VSync", "HDR", "Monitor", "Brightness", "Contrast", "AsyncCompute", "Latency", "Chromatic", "FilmGrain"))
             return L.Get("config.category_video");
         if (ContainsAny(key, "FieldOfView", "Offset", "Gore", "HitMarker", "ItemHighlight"))
             return L.Get("config.category_gameplay_camera");

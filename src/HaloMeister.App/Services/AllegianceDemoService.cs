@@ -69,8 +69,9 @@ public sealed class AllegianceDemoService
         }
     }
 
-    /// <summary>Friendly = player (1). Hostile = covenant (3).</summary>
+    /// <summary>Friendly = player (1). Human = UNSC allies (2). Hostile = covenant (3).</summary>
     public const int FriendlyTeam = 1;
+    public const int HumanTeam = 2;
     public const int HostileTeam = 3;
 
     public void ApplyRecallSettings(AllegianceBotRecallSettings settings)
@@ -132,6 +133,13 @@ public sealed class AllegianceDemoService
         EnemySpawnChoice character) =>
         _spawner.GetCompatibleWeapons(character);
 
+    public IReadOnlyList<AiWeaponChoice> GetAuthoredWeapons(
+        EnemySpawnChoice character) =>
+        _spawner.GetAuthoredWeapons(character);
+
+    public IReadOnlyList<WeaponModelVariant> GetWeaponVariants(AiWeaponChoice weapon) =>
+        _spawner.ReadWeaponVariants(weapon);
+
     public string ScaffoldDiagnosisLogPath =>
         EnemySpawnerService.ScaffoldDiagnosisLogPath;
 
@@ -143,9 +151,11 @@ public sealed class AllegianceDemoService
         float formationOffsetX = 0,
         float formationOffsetY = 0,
         AiWeaponChoice? weapon = null,
+        WeaponModelVariant? weaponVariant = null,
+        bool? followPlayer = null,
         CancellationToken cancellationToken = default)
     {
-        if (campaignTeam is not (FriendlyTeam or HostileTeam))
+        if (campaignTeam is not (FriendlyTeam or HumanTeam or HostileTeam))
             throw new ArgumentOutOfRangeException(nameof(campaignTeam));
         if (count is < 1 or > 5)
             throw new ArgumentOutOfRangeException(nameof(count));
@@ -157,7 +167,7 @@ public sealed class AllegianceDemoService
         //
         // Keep initial objective/task for both stances so actor_new inherits
         // attack desire. Dedicated hm_* always keep combat objective.
-        bool followPlayer = campaignTeam == FriendlyTeam;
+        bool follow = followPlayer ?? (campaignTeam == FriendlyTeam);
         ScriptExecutionResult result = await _spawner.SpawnGroupAsync(
             character,
             variant,
@@ -165,9 +175,10 @@ public sealed class AllegianceDemoService
             formationOffsetX,
             formationOffsetY,
             weapon,
-            followPlayer: followPlayer,
+            followPlayer: follow,
             clearSquadObjective: false,
             campaignTeam: (ushort)campaignTeam,
+            weaponVariant: weaponVariant,
             cancellationToken: cancellationToken);
         IReadOnlyList<int> actors = ParseActorDatums(result.Message);
         int? actor = actors.Count > 0
@@ -179,13 +190,13 @@ public sealed class AllegianceDemoService
         result = await WakeSpawnedSquadAsync(
             result,
             diagnosis,
-            preserveFireteam: followPlayer,
+            preserveFireteam: follow,
             cancellationToken);
         // AI spawn reports Confirmed (including deferred "submitted" mapped in
         // the bridge). Track bots whenever creation succeeded so recall works.
         if (IsSpawnSuccess(result.Outcome))
         {
-            TrackSpawnedBots(actors, friendly: followPlayer);
+            TrackSpawnedBots(actors, friendly: campaignTeam is FriendlyTeam or HumanTeam);
         }
         return new AllegianceDemoSpawnResult(result, actor, diagnosis);
     }
@@ -403,7 +414,7 @@ public sealed class AllegianceDemoService
         int? actorDatum = null,
         CancellationToken cancellationToken = default)
     {
-        if (team is not (FriendlyTeam or HostileTeam))
+        if (team is not (FriendlyTeam or HumanTeam or HostileTeam))
             throw new ArgumentOutOfRangeException(nameof(team));
 
         // Minimal payload: target,team. Lua appends player unit for combat-aim clear.
@@ -429,17 +440,78 @@ public sealed class AllegianceDemoService
     public async Task<ScriptExecutionResult> SubmitAllegianceAsync(
         int team,
         bool breakAllegiance,
+        CancellationToken cancellationToken = default) =>
+        await SubmitAllegiancePairsAsync(
+            [(FriendlyTeam, team, breakAllegiance)],
+            cancellationToken);
+
+    /// <summary>
+    /// Apply or break pairwise <c>ai_allegiance</c> in both directions.
+    /// Same-team pairs are skipped.
+    /// </summary>
+    public async Task<ScriptExecutionResult> SubmitAllegiancePairsAsync(
+        IReadOnlyList<(int Left, int Right, bool Break)> pairs,
         CancellationToken cancellationToken = default)
     {
-        string teamName = HaloScriptTeamName(team);
-        string verb = breakAllegiance ? "ai_allegiance_break" : "ai_allegiance";
-        string expression =
-            $"{verb} player {teamName}\n{verb} {teamName} player";
+        var lines = new List<string>();
+        foreach ((int left, int right, bool breakAllegiance) in pairs)
+        {
+            if (left == right)
+                continue;
+            string leftName = HaloScriptTeamName(left);
+            string rightName = HaloScriptTeamName(right);
+            if (breakAllegiance)
+            {
+                // ai_allegiance_remove is the inverse of ai_allegiance.
+                // ai_allegiance_break is a campaign "betrayal" flag and often
+                // does nothing to a relationship we created ourselves.
+                lines.Add($"ai_allegiance_remove {leftName} {rightName}");
+                lines.Add($"ai_allegiance_remove {rightName} {leftName}");
+                lines.Add($"ai_allegiance_break {leftName} {rightName}");
+                lines.Add($"ai_allegiance_break {rightName} {leftName}");
+            }
+            else
+            {
+                lines.Add($"ai_allegiance {leftName} {rightName}");
+                lines.Add($"ai_allegiance {rightName} {leftName}");
+            }
+        }
+
+        if (lines.Count == 0)
+            throw new ArgumentException("No allegiance pairs were provided.", nameof(pairs));
+
         EnsureBridgeReady();
         return await _bridge.ExecuteAsync(
             ScriptLanguage.HaloScript,
-            expression,
+            string.Join('\n', lines),
             TimeSpan.FromSeconds(10),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// After a ceasefire, AI often stay idle. Nudge both dedicated battle
+    /// squads so they notice each other once allegiance is removed.
+    /// </summary>
+    public async Task WakeBattleCombatAsync(
+        CancellationToken cancellationToken = default)
+    {
+        string ally = EnemySpawnerService.DedicatedAllySquadName;
+        string hostile = EnemySpawnerService.DedicatedHostileSquadName;
+        await TryRunHaloScriptAsync(
+            [
+                $"ai_suppress_combat {ally} false",
+                $"ai_suppress_combat {hostile} false",
+                $"ai_force_active {ally} true",
+                $"ai_force_active {hostile} true",
+                $"ai_renew {ally}",
+                $"ai_renew {hostile}",
+                $"ai_set_weapon_up {ally} true",
+                $"ai_set_weapon_up {hostile} true",
+                $"ai_magically_see {ally} {hostile}",
+                $"ai_magically_see {hostile} {ally}",
+                $"ai_prefer_target_team {ally} covenant",
+                $"ai_prefer_target_team {hostile} human",
+            ],
             cancellationToken);
     }
 

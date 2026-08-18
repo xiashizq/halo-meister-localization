@@ -1,6 +1,8 @@
 // Generated from src/HaloMeister.App/Assets/GameBuildProfiles.json.
-// Regenerate with: python tools/game_build_analyzer.py --dll <path-to-dll> --base 2026-07-29-wingdk --generate 2026-07-25-steam-post-cu2
+// Regenerate with: python tools/game_build_analyzer.py --dll <path-to-dll> --base 2026-08-17-steam --generate 2026-08-17-steam
 // Do not hand-edit addresses here.
+
+#include "native_address_table.h"
 
 struct SupportedBuildIdentity
 {
@@ -10,36 +12,79 @@ struct SupportedBuildIdentity
     DWORD image_size;
 };
 
-constexpr std::array<SupportedBuildIdentity, 2> kSupportedBuilds{{
-    {"2026-07-25-steam-post-cu2", "82B8A3A006BA3F981D6857DC7F4E4E929AE5282587F31F92F77A3FA78F4B2DAC", 0x6A6413B4, 0x02CE1000},
-    {"2026-07-29-wingdk", "6F34B317BB5CDDE87A1A0DB4D5CAFADC78C3C2C9EC6658819FAE11D9F666C595", 0x6A641022, 0x02CE1000},
+constexpr std::array<SupportedBuildIdentity, 1> kSupportedBuilds{{
+    {"2026-08-17-steam", "C8C144404ADF61A9DE821C996682A7E66ABADD7E530397D3BBDE31C123203BF7", 0x6A7A740A, 0x02CE1000},
 }};
 
-constexpr std::uintptr_t kSavedFilmOpenRva = 0x002054F0;
-constexpr std::uintptr_t kCommandPumpRva = 0x0000E670;
-constexpr std::uintptr_t kPlacementInitializeRva = 0x005EE570;
-constexpr std::uintptr_t kObjectNewRva = 0x005A0FB0;
-constexpr std::uintptr_t kObjectDeleteRva = 0x005A2C20;
-constexpr std::uintptr_t kObjectSetVariantRva = 0x005A7D00;
-constexpr std::uintptr_t kObjectSetColorsRva = 0x005B32C0;
-constexpr std::uintptr_t kObjectChangedRva = 0x004586D0;
-constexpr std::uintptr_t kObjectGetRva = 0x005A9690;
-constexpr std::uintptr_t kObjectGetPositionRva = 0x005A6770;
-constexpr std::uintptr_t kObjectGetOrientationRva = 0x005A6AD0;
-constexpr std::uintptr_t kObjectTeleportRva = 0x00351600;
-constexpr std::uintptr_t kObjectSetPhysicsRva = 0x005A6090;
-constexpr std::uintptr_t kUnitAddWeaponRva = 0x00609BC0;
-constexpr std::uintptr_t kSimulationContextRva = 0x00180E70;
-constexpr std::uintptr_t kPlayerEnableInputRva = 0x00188400;
-constexpr std::uintptr_t kMachinimaCameraToggleRva = 0x001F49F0;
-constexpr std::uintptr_t kAiPlaceRva = 0x000FD810;
-constexpr std::uintptr_t kActorNewRva = 0x00057D50;
-constexpr std::uintptr_t kActorStartingLocationsBuildRva = 0x0004B780;
-constexpr std::uintptr_t kCheatBumpPossessionRva = 0x009A92F0;
-constexpr std::uintptr_t kSkullMaskApplyRva = 0x00209FB0;
-constexpr std::uintptr_t kTlsIndexRva = 0x00D72730;
-constexpr std::uintptr_t kScenarioRootPointerRva = 0x010C3558;
-constexpr std::uintptr_t kTagArenaTableRva = 0x02C2CC90;
+constexpr NativeAddressTable kNativeAddresses{
+    0x00205500, // savedFilmOpen
+    0x0000E670, // commandPump
+    0x005EE570, // placementInitialize
+    0x005A0FC0, // objectNew
+    0x005A2C30, // objectDelete
+    0x005A7D10, // objectSetVariant
+    0x005B32D0, // objectSetColors
+    0x004586E0, // objectChanged
+    0x005A96A0, // objectGet
+    0x005A6780, // objectGetPosition
+    0x005A6AE0, // objectGetOrientation
+    0x00351610, // objectTeleport
+    0x005A60A0, // objectSetPhysics
+    0x00609BC0, // unitAddWeapon
+    0x00180E70, // simulationContext
+    0x00188400, // playerEnableInput
+    0x001F4A00, // machinimaCameraToggle
+    0x000FD810, // aiPlace
+    0x00057D50, // actorNew
+    0x0004B780, // actorStartingLocationsBuild
+    0x009A92F0, // cheatBumpPossession
+    0x00209FC0, // skullMaskApply
+    0x00D72730, // tlsIndex
+    0x010C3558, // scenarioRootPointer
+    0x02C2CC90, // tagArenaTable
+    0x001FECA0, // hsArgumentsEvaluate
+    0x001FE100, // hsReturn
+    0x001CDFF0, // aiPlayerAddFireteamSquad
+    0x001CE020, // aiPlayerAddFireteamSquadArgumentsReturn
+    0x001CE43C, // aiPlayerAddFireteamSquadHsReturn
+    0x000FCEC0, // aiObjectStateResolve
+    0x00087540, // aiObjectSetTeam
+    0x0004A875, // aiPlacePreObjectReturn
+};
+
+constexpr std::uintptr_t kSavedFilmOpenRva = kNativeAddresses.savedFilmOpen;
+constexpr std::uintptr_t kCommandPumpRva = kNativeAddresses.commandPump;
+constexpr std::uintptr_t kPlacementInitializeRva = kNativeAddresses.placementInitialize;
+constexpr std::uintptr_t kObjectNewRva = kNativeAddresses.objectNew;
+constexpr std::uintptr_t kObjectDeleteRva = kNativeAddresses.objectDelete;
+constexpr std::uintptr_t kObjectSetVariantRva = kNativeAddresses.objectSetVariant;
+constexpr std::uintptr_t kObjectSetColorsRva = kNativeAddresses.objectSetColors;
+constexpr std::uintptr_t kObjectChangedRva = kNativeAddresses.objectChanged;
+constexpr std::uintptr_t kObjectGetRva = kNativeAddresses.objectGet;
+constexpr std::uintptr_t kObjectGetPositionRva = kNativeAddresses.objectGetPosition;
+constexpr std::uintptr_t kObjectGetOrientationRva = kNativeAddresses.objectGetOrientation;
+constexpr std::uintptr_t kObjectTeleportRva = kNativeAddresses.objectTeleport;
+constexpr std::uintptr_t kObjectSetPhysicsRva = kNativeAddresses.objectSetPhysics;
+constexpr std::uintptr_t kUnitAddWeaponRva = kNativeAddresses.unitAddWeapon;
+constexpr std::uintptr_t kSimulationContextRva = kNativeAddresses.simulationContext;
+constexpr std::uintptr_t kPlayerEnableInputRva = kNativeAddresses.playerEnableInput;
+constexpr std::uintptr_t kMachinimaCameraToggleRva = kNativeAddresses.machinimaCameraToggle;
+constexpr std::uintptr_t kAiPlaceRva = kNativeAddresses.aiPlace;
+constexpr std::uintptr_t kActorNewRva = kNativeAddresses.actorNew;
+constexpr std::uintptr_t kActorStartingLocationsBuildRva = kNativeAddresses.actorStartingLocationsBuild;
+constexpr std::uintptr_t kCheatBumpPossessionRva = kNativeAddresses.cheatBumpPossession;
+constexpr std::uintptr_t kSkullMaskApplyRva = kNativeAddresses.skullMaskApply;
+constexpr std::uintptr_t kTlsIndexRva = kNativeAddresses.tlsIndex;
+constexpr std::uintptr_t kScenarioRootPointerRva = kNativeAddresses.scenarioRootPointer;
+constexpr std::uintptr_t kTagArenaTableRva = kNativeAddresses.tagArenaTable;
+constexpr std::uintptr_t kHsArgumentsEvaluateRva = kNativeAddresses.hsArgumentsEvaluate;
+constexpr std::uintptr_t kHsReturnRva = kNativeAddresses.hsReturn;
+constexpr std::uintptr_t kAiPlayerAddFireteamSquadRva = kNativeAddresses.aiPlayerAddFireteamSquad;
+constexpr std::uintptr_t kAiPlayerAddFireteamSquadArgumentsReturnRva = kNativeAddresses.aiPlayerAddFireteamSquadArgumentsReturn;
+constexpr std::uintptr_t kAiPlayerAddFireteamSquadHsReturnRva = kNativeAddresses.aiPlayerAddFireteamSquadHsReturn;
+constexpr std::uintptr_t kAiObjectStateResolveRva = kNativeAddresses.aiObjectStateResolve;
+constexpr std::uintptr_t kAiObjectSetTeamRva = kNativeAddresses.aiObjectSetTeam;
+constexpr std::uintptr_t kAiPlacePreObjectReturnRva = kNativeAddresses.aiPlacePreObjectReturn;
 
 constexpr std::array<std::uint8_t, 16> kPlacementInitializePrologue{
     0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x55, 0x41,
@@ -51,7 +96,7 @@ constexpr std::array<std::uint8_t, 16> kObjectNewPrologue{
 };
 constexpr std::array<std::uint8_t, 16> kObjectDeletePrologue{
     0x48, 0x8B, 0xC4, 0x53, 0x48, 0x83, 0xEC, 0x70,
-    0x8B, 0x15, 0x02, 0xFB, 0x7C, 0x00, 0x48, 0x89,
+    0x8B, 0x15, 0xF2, 0xFA, 0x7C, 0x00, 0x48, 0x89,
 };
 constexpr std::array<std::uint8_t, 16> kUnitAddWeaponPrologue{
     0x48, 0x89, 0x5C, 0x24, 0x10, 0x55, 0x56, 0x57,
@@ -59,7 +104,7 @@ constexpr std::array<std::uint8_t, 16> kUnitAddWeaponPrologue{
 };
 constexpr std::array<std::uint8_t, 16> kObjectSetVariantPrologue{
     0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83,
-    0xEC, 0x20, 0x44, 0x8B, 0x05, 0x1F, 0xAA, 0x7C,
+    0xEC, 0x20, 0x44, 0x8B, 0x05, 0x0F, 0xAA, 0x7C,
 };
 constexpr std::array<std::uint8_t, 16> kObjectSetColorsPrologue{
     0x4C, 0x89, 0x44, 0x24, 0x18, 0x53, 0x55, 0x56,
@@ -74,12 +119,12 @@ constexpr std::array<std::uint8_t, 16> kObjectGetPrologue{
     0x8B, 0x0C, 0x25, 0x58, 0x00, 0x00, 0x00, 0x44,
 };
 constexpr std::array<std::uint8_t, 16> kObjectGetPositionPrologue{
-    0x44, 0x8B, 0x05, 0xB9, 0xBF, 0x7C, 0x00, 0x4C,
+    0x44, 0x8B, 0x05, 0xA9, 0xBF, 0x7C, 0x00, 0x4C,
     0x8B, 0xCA, 0x65, 0x48, 0x8B, 0x04, 0x25, 0x58,
 };
 constexpr std::array<std::uint8_t, 16> kObjectGetOrientationPrologue{
     0x40, 0x53, 0x48, 0x81, 0xEC, 0xA0, 0x00, 0x00,
-    0x00, 0x44, 0x8B, 0x0D, 0x50, 0xBC, 0x7C, 0x00,
+    0x00, 0x44, 0x8B, 0x0D, 0x40, 0xBC, 0x7C, 0x00,
 };
 constexpr std::array<std::uint8_t, 16> kObjectTeleportPrologue{
     0x83, 0xF9, 0xFF, 0x0F, 0x84, 0x0D, 0x04, 0x00,
@@ -87,7 +132,7 @@ constexpr std::array<std::uint8_t, 16> kObjectTeleportPrologue{
 };
 constexpr std::array<std::uint8_t, 16> kObjectSetPhysicsPrologue{
     0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83,
-    0xEC, 0x20, 0x44, 0x8B, 0x05, 0x8F, 0xC6, 0x7C,
+    0xEC, 0x20, 0x44, 0x8B, 0x05, 0x7F, 0xC6, 0x7C,
 };
 constexpr std::array<std::uint8_t, kHookLength> kSimulationContextPrologue{
     0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74,
@@ -98,7 +143,7 @@ constexpr std::array<std::uint8_t, 16> kPlayerEnableInputPrologue{
     0x00, 0x80, 0xF1, 0x01, 0x8B, 0x15, 0x1E, 0xA3,
 };
 constexpr std::array<std::uint8_t, 16> kMachinimaCameraTogglePrologue{
-    0x8B, 0x0D, 0x3A, 0xDD, 0xB7, 0x00, 0x44, 0x8B,
+    0x8B, 0x0D, 0x2A, 0xDD, 0xB7, 0x00, 0x44, 0x8B,
     0xCA, 0x65, 0x48, 0x8B, 0x04, 0x25, 0x58, 0x00,
 };
 constexpr std::array<std::uint8_t, 16> kAiPlacePrologue{
@@ -114,8 +159,8 @@ constexpr std::array<std::uint8_t, 16> kActorStartingLocationsBuildPrologue{
     0x24, 0x18, 0x89, 0x54, 0x24, 0x10, 0x55, 0x53,
 };
 constexpr std::array<std::uint8_t, 16> kSavedFilmOpenPrologue{
-    0x48, 0x83, 0xEC, 0x28, 0x4C, 0x8D, 0x05, 0xCD,
-    0x0B, 0x17, 0x01, 0xC7, 0x05, 0xFF, 0x1F, 0x15,
+    0x48, 0x83, 0xEC, 0x28, 0x4C, 0x8D, 0x05, 0xBD,
+    0x0B, 0x17, 0x01, 0xC7, 0x05, 0xEF, 0x1F, 0x15,
 };
 constexpr std::array<std::uint8_t, kCommandPumpHookLength> kCommandPumpPrologue{
     0x48, 0x89, 0x5C, 0x24, 0x08, 0x55, 0x56, 0x57,
@@ -123,7 +168,29 @@ constexpr std::array<std::uint8_t, kCommandPumpHookLength> kCommandPumpPrologue{
 };
 constexpr std::array<std::uint8_t, 16> kSkullMaskApplyPrologue{
     0x4C, 0x8B, 0xDC, 0x56, 0x57, 0x41, 0x56, 0x48,
-    0x83, 0xEC, 0x50, 0x8B, 0x15, 0x6F, 0x87, 0xB6,
+    0x83, 0xEC, 0x50, 0x8B, 0x15, 0x5F, 0x87, 0xB6,
+};
+constexpr std::array<std::uint8_t, kHsHookLength> kHsArgumentsEvaluatePrologue{
+    0x48, 0x8B, 0xC4, 0x44, 0x88, 0x48, 0x20, 0x4C,
+    0x89, 0x40, 0x18, 0x66, 0x89, 0x50, 0x10, 0x53,
+    0x56, 0x57, 0x41, 0x56,
+};
+constexpr std::array<std::uint8_t, kHsHookLength> kHsReturnPrologue{
+    0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x56, 0x48,
+    0x83, 0xEC, 0x20, 0x65, 0x48, 0x8B, 0x04, 0x25,
+    0x58, 0x00, 0x00, 0x00,
+};
+constexpr std::array<std::uint8_t, 16> kAiPlayerAddFireteamSquadPrologue{
+    0x89, 0x54, 0x24, 0x10, 0x48, 0x83, 0xEC, 0x78,
+    0x8B, 0xC2, 0x45, 0x0F, 0xB6, 0xC8, 0x48, 0x0F,
+};
+constexpr std::array<std::uint8_t, 16> kAiObjectStateResolvePrologue{
+    0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41,
+    0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x8B,
+};
+constexpr std::array<std::uint8_t, 16> kAiObjectSetTeamPrologue{
+    0x48, 0x89, 0x5C, 0x24, 0x10, 0x89, 0x4C, 0x24,
+    0x08, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55,
 };
 
 struct CheatGlobal

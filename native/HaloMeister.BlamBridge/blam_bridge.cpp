@@ -54,41 +54,7 @@ constexpr std::size_t kActorRecordSize = 0xD10;
 constexpr std::size_t kActorUnitDatumOffset = 0x1C;
 constexpr std::size_t kThreadActorDataOffset = 0x28;
 constexpr std::size_t kHsHookLength = 20;
-constexpr std::uintptr_t kHsArgumentsEvaluateRva = 0x001FEC90;
-constexpr std::uintptr_t kHsReturnRva = 0x001FE0F0;
-constexpr std::uintptr_t kAiPlayerAddFireteamSquadRva = 0x001CDFE0;
-constexpr std::uintptr_t kAiPlayerAddFireteamSquadArgumentsReturnRva =
-    0x001CE010;
-constexpr std::uintptr_t kAiPlayerAddFireteamSquadHsReturnRva =
-    0x001CE42C;
 constexpr std::int16_t kAiPlayerAddFireteamSquadOpcode = 572;
-constexpr std::array<std::uint8_t, kHsHookLength>
-    kHsArgumentsEvaluatePrologue{
-        0x48, 0x8B, 0xC4, 0x44, 0x88, 0x48, 0x20, 0x4C,
-        0x89, 0x40, 0x18, 0x66, 0x89, 0x50, 0x10, 0x53,
-        0x56, 0x57, 0x41, 0x56,
-    };
-constexpr std::array<std::uint8_t, kHsHookLength> kHsReturnPrologue{
-    0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x56, 0x48,
-    0x83, 0xEC, 0x20, 0x65, 0x48, 0x8B, 0x04, 0x25,
-    0x58, 0x00, 0x00, 0x00,
-};
-constexpr std::array<std::uint8_t, 16>
-    kAiPlayerAddFireteamSquadPrologue{
-        0x89, 0x54, 0x24, 0x10, 0x48, 0x83, 0xEC, 0x78,
-        0x8B, 0xC2, 0x45, 0x0F, 0xB6, 0xC8, 0x48, 0x0F,
-    };
-constexpr std::uintptr_t kAiObjectStateResolveRva = 0x000FCEC0;
-constexpr std::uintptr_t kAiObjectSetTeamRva = 0x00087540;
-constexpr std::array<std::uint8_t, 16> kAiObjectStateResolvePrologue{
-    0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41,
-    0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x8B,
-};
-constexpr std::array<std::uint8_t, 16> kAiObjectSetTeamPrologue{
-    0x48, 0x89, 0x5C, 0x24, 0x10, 0x89, 0x4C, 0x24,
-    0x08, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55,
-};
-constexpr std::uintptr_t kAiPlacePreObjectReturnRva = 0x0004A875;
 constexpr std::size_t kMaxAiPlacements = 5;
 
 #include "generated_game_build.h"
@@ -6062,15 +6028,22 @@ void* hooked_simulation_context()
             else
             {
                 std::string finalization_error;
-                if (!finalize_deferred_ai(
-                        module,
-                        g_pending_request,
-                        finalization_error) &&
-                    GetTickCount64() < g_deferred_ai_finalize_deadline)
+                try
                 {
-                    g_deferred_result_due = GetTickCount64() + 250;
-                    InterlockedExchange(&g_pending_state, 3);
-                    return context;
+                    if (!finalize_deferred_ai(
+                            module,
+                            g_pending_request,
+                            finalization_error) &&
+                        GetTickCount64() < g_deferred_ai_finalize_deadline)
+                    {
+                        g_deferred_result_due = GetTickCount64() + 250;
+                        InterlockedExchange(&g_pending_state, 3);
+                        return context;
+                    }
+                }
+                catch (const std::exception& exception)
+                {
+                    finalization_error = exception.what();
                 }
                 // Always restore borrowed scenario fields (including squad
                 // team held for actor_new) after finalize succeeds or fails.

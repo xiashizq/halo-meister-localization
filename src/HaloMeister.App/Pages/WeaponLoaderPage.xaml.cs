@@ -19,7 +19,7 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
     private ProjectileSwapWeapon? _projectileWeapon;
     private RuntimeTagEntry? _selectedProjectile;
     private IReadOnlyList<WeaponModelVariant> _weaponVariants = [];
-    private WeaponModelVariant? _selectedVariant;
+    private bool _variantsInspected;
     private StanchionImportPreview? _stanchionPreview;
     private bool _busy;
     private bool _hasScanned;
@@ -164,7 +164,6 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
         CurrentProjectileText.Text = _projectileWeapon?.CurrentProjectileText ??
             L.Get("weapon_loader.no_editable_projectile");
         _ = ShowVariantsAsync(_selected, ++_variantRequestVersion);
-        UpdateLoadButton();
         UpdateImportButtons();
         UpdateProjectileControls();
     }
@@ -212,8 +211,8 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
             _projectileWeapon is null)
             return;
 
-        // Disabled controls above this box (e.g. Pick up and equip) are not hit-testable, so
-        // a click on them can move focus here. Only open suggestions for a direct pointer focus.
+        // Disabled controls above this box are not hit-testable, so a click on
+        // them can move focus here. Only open suggestions for a direct pointer focus.
         if (picker.FocusState != FocusState.Pointer)
             return;
 
@@ -275,8 +274,8 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
     private async Task ShowVariantsAsync(LoadableWeapon? selected, int requestVersion)
     {
         _weaponVariants = [];
-        _selectedVariant = null;
-        VariantPicker.ItemsSource = null;
+        _variantsInspected = false;
+        VariantList.ItemsSource = null;
         VariantSummaryText.Text = selected is null
             ? ""
             : L.Get("weapon_loader.reading_variants");
@@ -296,15 +295,16 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
                 return;
             }
             _weaponVariants = catalog.Variants;
-            VariantPicker.ItemsSource = _weaponVariants;
-            VariantPicker.SelectedIndex = 0;
-            _selectedVariant = VariantPicker.SelectedItem as WeaponModelVariant;
-            VariantSummaryText.Text = L.Format(
-                _weaponVariants.Count == 1
-                    ? "weapon_loader.authored_variant_one"
-                    : "weapon_loader.authored_variant_many",
-                _weaponVariants.Count,
-                catalog.Model.LeafName);
+            _variantsInspected = true;
+            VariantList.ItemsSource = _weaponVariants;
+            VariantSummaryText.Text = _weaponVariants.Count == 0
+                ? L.Get("weapon_loader.no_authored_variants")
+                : L.Format(
+                    _weaponVariants.Count == 1
+                        ? "weapon_loader.authored_variant_one"
+                        : "weapon_loader.authored_variant_many",
+                    _weaponVariants.Count,
+                    catalog.Model.LeafName);
         }
         catch (Exception ex)
         {
@@ -313,39 +313,45 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
             {
                 return;
             }
+            _variantsInspected = true;
             VariantSummaryText.Text = L.Format("weapon_loader.variants_unavailable", ex.Message);
         }
 
         UpdateVariantControls();
     }
 
-    private void OnVariantSelectionChanged(
-        object sender,
-        SelectionChangedEventArgs e)
+    private async void OnEquipVariant(object sender, RoutedEventArgs e)
     {
-        _selectedVariant = VariantPicker.SelectedItem as WeaponModelVariant;
-        UpdateVariantControls();
+        if (_selected is not { } weapon ||
+            sender is not FrameworkElement { Tag: WeaponModelVariant variant })
+            return;
+
+        await EquipAsync(weapon, variant);
     }
 
-    private async void OnLoadWeapon(object sender, RoutedEventArgs e)
+    private async void OnEquipDefault(object sender, RoutedEventArgs e)
     {
         if (_selected is not { } weapon) return;
+        await EquipAsync(weapon, null);
+    }
+
+    private async Task EquipAsync(LoadableWeapon weapon, WeaponModelVariant? variant)
+    {
         await RunBusy(async () =>
         {
-            ScriptExecutionResult result = await _loader.LoadAsync(
-                weapon,
-                _selectedVariant);
-            string message = _selectedVariant is null
-                ? L.Format(
-                    "weapon_loader.weapon_handed_to_player",
-                    weapon.Name,
-                    result.Message)
-                : L.Format(
-                    "weapon_loader.weapon_handed_to_player_variant",
-                    weapon.Name,
-                    _selectedVariant.Name,
-                    result.Message);
-            ShowStatus(message, InfoBarSeverity.Success);
+            ScriptExecutionResult result = await _loader.LoadAsync(weapon, variant);
+            ShowStatus(
+                variant is null
+                    ? L.Format(
+                        "weapon_loader.weapon_handed_to_player",
+                        weapon.Name,
+                        result.Message)
+                    : L.Format(
+                        "weapon_loader.weapon_handed_to_player_variant",
+                        weapon.Name,
+                        variant.Name,
+                        result.Message),
+                InfoBarSeverity.Success);
         });
     }
 
@@ -422,10 +428,10 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
         BusyRing.IsActive = true;
         ScanButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
-        LoadButton.IsEnabled = false;
         ProjectilePicker.IsEnabled = false;
         SwapButton.IsEnabled = false;
-        VariantPicker.IsEnabled = false;
+        VariantList.IsEnabled = false;
+        EquipDefaultButton.IsEnabled = false;
         ImportStanchionButton.IsEnabled = false;
         ApplySubstitutionsButton.IsEnabled = false;
         try { await action(); }
@@ -436,7 +442,6 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
             BusyRing.IsActive = false;
             RefreshFullPalettesState();
             UpdateConnectionButtons();
-            UpdateLoadButton();
             UpdateImportButtons();
             UpdateProjectileControls();
             UpdateVariantControls();
@@ -466,7 +471,6 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
         FullPalettesButton.Content = _fullPalettesInstalled
             ? L.Get("vehicle_workshop.remove_all_vehicles_weapons")
             : L.Get("vehicle_workshop.add_all_vehicles_weapons");
-        UpdateLoadButton();
         UpdateImportButtons();
         UpdateProjectileControls();
         UpdateVariantControls();
@@ -482,17 +486,6 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
                 _projectileSession?.Projectiles.Count ?? 0,
                 status.Summary)
             : status.Summary;
-    }
-
-    private void UpdateLoadButton()
-    {
-        ScriptingBridgeStatus bridge = _loader.BridgeStatus();
-        LoadButton.IsEnabled =
-            !_busy &&
-            _selected is not null &&
-            _loader.ProcessId != 0 &&
-            bridge.IsRuntimeReady &&
-            !bridge.IsStale;
     }
 
     private void UpdateImportButtons()
@@ -511,15 +504,21 @@ public sealed partial class WeaponLoaderPage : Page, IActivatablePage
     private void UpdateVariantControls()
     {
         ScriptingBridgeStatus bridge = _loader.BridgeStatus();
-        bool ready =
+        bool canEquip =
             !_busy &&
             _game.IsConnected &&
             _selected is not null &&
-            _weaponVariants.Count > 0 &&
             _loader.ProcessId != 0 &&
             bridge.IsRuntimeReady &&
             !bridge.IsStale;
-        VariantPicker.IsEnabled = ready;
+        bool hasVariants = _weaponVariants.Count > 0;
+        VariantList.IsEnabled = canEquip && hasVariants;
+        VariantList.Visibility = hasVariants ? Visibility.Visible : Visibility.Collapsed;
+        EquipDefaultButton.Visibility =
+            _variantsInspected && !hasVariants
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        EquipDefaultButton.IsEnabled = canEquip && _variantsInspected && !hasVariants;
     }
 
     private void ShowStatus(string message, InfoBarSeverity severity)

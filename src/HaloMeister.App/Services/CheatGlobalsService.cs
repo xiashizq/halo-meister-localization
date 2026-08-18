@@ -134,8 +134,7 @@ public sealed class CheatGlobalsService
         string script = name switch
         {
             "deathless_player" => BuildDeathlessScript(enabled),
-            "ai_disregard" =>
-                $"ai_disregard (players) {(enabled ? "true" : "false")}",
+            "ai_disregard" => BuildAiDisregardScript(enabled),
             _ => throw new ArgumentOutOfRangeException(nameof(name)),
         };
 
@@ -153,7 +152,24 @@ public sealed class CheatGlobalsService
         string flag = enabled ? "true" : "false";
         var builder = new StringBuilder();
         for (int index = 0; index <= 3; index++)
-            builder.AppendLine($"object_cannot_die (player{index}) {flag}");
+            builder.AppendLine($"object_cannot_die (player_get {index}) {flag}");
+        return builder.ToString().TrimEnd();
+    }
+
+    // player_get is the live player unit. (players) submits but is not targeted.
+    private static string BuildAiDisregardScript(bool enabled)
+    {
+        string flag = enabled ? "true" : "false";
+        var builder = new StringBuilder();
+        for (int index = 0; index <= 3; index++)
+        {
+            builder.AppendLine($"ai_disregard (player_get {index}) {flag}");
+            builder.AppendLine(
+                $"ai_disregard (unit_get_vehicle (player_get {index})) {flag}");
+            if (enabled)
+                builder.AppendLine($"ai_prefer_target (player_get {index}) false");
+        }
+
         return builder.ToString().TrimEnd();
     }
 
